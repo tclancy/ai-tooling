@@ -29,6 +29,7 @@
 ### Task 1: harnesses.tsv, test scaffolding, copy-mode install with receipt
 
 **Files:**
+- Create: `.gitattributes`
 - Create: `harnesses.tsv`
 - Create: `install.sh`
 - Create: `tests/installer/lib.sh`
@@ -55,6 +56,19 @@ agents	~/.claude	~/.claude/agents
 commands	~/.codex	~/.codex/prompts
 ```
 
+Also create `.gitattributes` — without it, Git-for-Windows' default
+`core.autocrlf=true` checks these files out with CRLF, and a CRLF TSV makes
+`install.sh` **exit 0 while installing into garbage `skills\r/` dirs**
+(empirically confirmed during plan review):
+
+```
+* text=auto
+*.sh text eol=lf
+*.tsv text eol=lf
+*.ps1 text eol=lf
+*.md text eol=lf
+```
+
 - [ ] **Step 2: Write `tests/installer/lib.sh`:**
 
 ```bash
@@ -76,7 +90,9 @@ setup_scratch() {
 
 run_installer() {
   set +e
-  OUT="$("$REPO/install.sh" "$@" 2>&1)"
+  # /bin/bash explicitly: enforces the 3.2 target on macOS and works even
+  # before the exec bit is set.
+  OUT="$(/bin/bash "$REPO/install.sh" "$@" 2>&1)"
   RC=$?
   set -e
 }
@@ -144,6 +160,9 @@ scenario_fresh_install() {
   setup_scratch
   run_installer
   assert_rc 0
+  # guard against a vacuous pass if expected_dests ever emits nothing
+  [ "$(expected_dests | wc -l | tr -d ' ')" -ge 4 ] || fail "expected_dests suspiciously small"
+  assert_contains "found:" "$OUT"
   while IFS= read -r d; do assert_exists "$d"; done < <(expected_dests)
   assert_exists "$H/$RECEIPT_REL"
   [ "$(head -n1 "$H/$RECEIPT_REL")" = "# ai-tooling-receipt v1" ] \
@@ -161,8 +180,8 @@ run_scenarios \
   scenario_fresh_install
 ```
 
-- [ ] **Step 4: Run to verify failure** — `chmod +x tests/installer/*.sh install.sh 2>/dev/null; /bin/bash tests/installer/run_sh_tests.sh`
-Expected: FAIL (install.sh doesn't exist yet / scenarios fail).
+- [ ] **Step 4: Run to verify failure** — `/bin/bash tests/installer/run_sh_tests.sh`
+Expected: FAIL (install.sh doesn't exist yet, so every scenario fails).
 
 - [ ] **Step 5: Write `install.sh` (complete file):**
 
@@ -233,6 +252,7 @@ all_dests() {
   local content detect dest
   while IFS=$'\t' read -r content detect dest; do
     case "$content" in ''|'#'*) continue ;; esac
+    dest="${dest%$'\r'}"   # belt-and-braces vs CRLF checkouts
     [ -n "$detect" ] && [ -n "$dest" ] \
       || die "harnesses.tsv: malformed row: '$content' (need 3 tab-separated fields)"
     printf '%s\n' "$(expand_tilde "$dest")"
@@ -246,7 +266,7 @@ check_disjoint() {
   while IFS= read -r a; do
     while IFS= read -r b; do
       [ "$a" = "$b" ] && continue
-      case "$a/" in "$b"/*) die "harnesses.tsv: dest '$a' lies inside dest '$b'" ;; esac
+      case "$(fold "$a/")" in "$(fold "$b")"/*) die "harnesses.tsv: dest '$a' lies inside dest '$b'" ;; esac
     done <<EOF_B
 $(all_dests)
 EOF_B
@@ -255,11 +275,14 @@ $(all_dests)
 EOF_A
 }
 
-report_skips() {
+report_skips() {  # harness-detection report: names every found AND skipped detect dir
   local content detect dest
   while IFS=$'\t' read -r content detect dest; do
     case "$content" in ''|'#'*) continue ;; esac
-    if [ "$detect" != "-" ] && [ ! -d "$(expand_tilde "$detect")" ]; then
+    [ "$detect" = "-" ] && continue
+    if [ -d "$(expand_tilde "$detect")" ]; then
+      note "found: $(expand_tilde "$detect") ($content will be installed)"
+    else
       note "skipped: $(expand_tilde "$detect") not found (no $content for that harness)"
     fi
   done < "$TSV"
@@ -269,6 +292,7 @@ active_rows() {  # stdout: content<TAB>expanded_dest — data only, no notes
   local content detect dest
   while IFS=$'\t' read -r content detect dest; do
     case "$content" in ''|'#'*) continue ;; esac
+    dest="${dest%$'\r'}"   # belt-and-braces vs CRLF checkouts
     if [ "$detect" = "-" ] || [ -d "$(expand_tilde "$detect")" ]; then
       printf '%s\t%s\n' "$content" "$(expand_tilde "$dest")"
     fi
@@ -307,8 +331,8 @@ ensure_dir() {  # create $1, recording each newly created level in the receipt
   ensure_dir "$(dirname "$d")"
   note "mkdir: $d"
   if [ "$DRY" = 0 ]; then
-    mkdir "$d"
-    receipt_append dir - "$d"
+    receipt_append dir - "$d"   # append-before-act: a crash never strands an unrecorded dir
+    [ -d "$d" ] || mkdir "$d"   # receipt bootstrap may have just created this very dir
   fi
 }
 
@@ -369,13 +393,13 @@ main() {
 main
 ```
 
-- [ ] **Step 6: Run tests to verify pass** — `/bin/bash tests/installer/run_sh_tests.sh`
-Expected: `RESULT: ALL PASS`. If on Linux, also confirm no bash-4isms snuck in by review (CI's macOS job is the real gate).
+- [ ] **Step 6: Set the exec bits, then run tests to verify pass** — `chmod +x install.sh tests/installer/*.sh && /bin/bash tests/installer/run_sh_tests.sh`
+Expected: `RESULT: ALL PASS`. If on Linux, also confirm no bash-4isms snuck in by review (CI's macOS job is the real gate). Confirm `git status`/`git diff --stat` shows the files with mode 100755 when staged.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add harnesses.tsv install.sh tests/installer/
+git add .gitattributes harnesses.tsv install.sh tests/installer/
 git commit -m "feat(installer): TSV routing, copy install, receipt, dry-run"
 ```
 
@@ -399,12 +423,17 @@ scenario_rerun_idempotent() {
   assert_rc 0
   run_installer
   assert_rc 0
+  run_installer
+  assert_rc 0
   while IFS= read -r d; do assert_exists "$d"; done < <(expected_dests)
-  # receipt stays bounded: exactly one line per dest after compaction+append
+  # Compaction bound: every run dedupes to 1 unit line per dest, then
+  # appends 1 more — so after ANY number of re-runs there are exactly 2.
+  # Without compaction, three runs would leave 3 per dest (this is what
+  # makes the scenario fail before Task 2's implementation).
   local n_dests n_lines
   n_dests="$(expected_dests | wc -l | tr -d ' ')"
-  n_lines="$(grep -c "$(printf '\t')" "$H/$RECEIPT_REL" || true)"
-  [ "$n_lines" -le $((2 * n_dests + 10)) ] || fail "receipt growing unbounded: $n_lines lines"
+  n_lines="$(awk -F'\t' 'NF >= 3 && $1 != "dir"' "$H/$RECEIPT_REL" | wc -l | tr -d ' ')"
+  [ "$n_lines" = "$((2 * n_dests))" ] || fail "receipt not compacted: $n_lines unit lines for $n_dests dests"
 }
 
 scenario_rename_cleans_orphan() {
@@ -422,7 +451,7 @@ scenario_rename_cleans_orphan() {
 ```
 
 - [ ] **Step 2: Run to verify the new scenarios fail** — `/bin/bash tests/installer/run_sh_tests.sh`
-Expected: `scenario_rename_cleans_orphan` FAILS (old dest still present). `scenario_rerun_idempotent` may already pass except the receipt-bound check.
+Expected: both new scenarios FAIL — `scenario_rename_cleans_orphan` (old dest still present) and `scenario_rerun_idempotent` (3 unit lines per dest without compaction, wants exactly 2).
 
 - [ ] **Step 3: Implement.** Add these functions to `install.sh` (after `remove_path`), and make `do_install`'s first line `compact_receipt_and_prune`:
 
@@ -440,9 +469,19 @@ receipt_current() {  # deduped receipt: last line per (folded) dest wins
   ' "$RECEIPT"
 }
 
-remove_owned() {  # mode src dest — dest is receipt-listed; verify links before deleting
+remove_owned() {  # mode src dest — dest is receipt-listed; verify link entries before deleting
   local mode="$1" src="$2" dest="$3" target
-  if [ -L "$dest" ] && [ "$mode" = link ]; then
+  if [ "$mode" = link ]; then
+    # A link entry may only ever delete a symlink still pointing at our
+    # source. If the user replaced our link with a real file/dir (or
+    # repointed it), it is theirs now — leave it.
+    if [ ! -L "$dest" ]; then
+      if [ -e "$dest" ]; then
+        note "warning: $dest is no longer our symlink — leaving it"
+        STATUS=2
+      fi
+      return 0
+    fi
     target="$(readlink "$dest")"
     if [ "$(fold "$target")" != "$(fold "$src")" ]; then
       note "warning: $dest points at '$target', not our '$src' — leaving it"
@@ -496,7 +535,7 @@ Expected: `RESULT: ALL PASS`.
 **Interfaces:**
 - Produces: `is_ours dest` (returns 0 iff the receipt has a line for `dest`, folded comparison). Task 5 does not use it (uninstall trusts the receipt), but ps1 mirrors it.
 
-- [ ] **Step 1: Add scenario:**
+- [ ] **Step 1: Add scenario** (and append its name to the `run_scenarios` call):
 
 ```bash
 scenario_foreign_dest_skipped_then_forced() {
@@ -567,7 +606,7 @@ The implementation largely exists (Task 1's `install_unit`, Task 1's `remove_pat
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: Add scenarios:**
+- [ ] **Step 1: Add scenarios** (and append their names to the `run_scenarios` call):
 
 ```bash
 scenario_link_install() {
@@ -614,12 +653,12 @@ scenario_copy_then_link() {
 
 **Files:**
 - Modify: `install.sh` (add `do_uninstall`; wire into `main`)
-- Modify: `tests/installer/run_sh_tests.sh` (three scenarios)
+- Modify: `tests/installer/run_sh_tests.sh` (four scenarios)
 
 **Interfaces:**
 - Produces: `do_uninstall` — consumes `receipt_current`, `remove_owned`, `remove_path`. Deletion order: unit entries, then the receipt file, then recorded `dir` entries deepest-first (`rmdir` only-if-empty), then `RECEIPT_DIR` itself (ours by definition — we put the receipt in it).
 
-- [ ] **Step 1: Add scenarios:**
+- [ ] **Step 1: Add scenarios** (and append their names to the `run_scenarios` call):
 
 ```bash
 scenario_uninstall_leaves_nothing() {
@@ -647,6 +686,21 @@ scenario_uninstall_skips_foreign_link() {
   assert_symlink "$H/.agents/skills/test-docs"     # left alone
   assert_contains "leaving it" "$OUT"
   assert_missing "$H/.claude/agents/doc-follower.md"  # rest removed
+}
+
+scenario_uninstall_leaves_replaced_link_dest() {
+  setup_scratch
+  run_installer --link
+  assert_rc 0
+  # user deletes our link and puts a REAL directory in its place —
+  # a link-mode receipt entry must never rm -rf a non-link dest
+  rm "$H/.agents/skills/test-docs"
+  mkdir -p "$H/.agents/skills/test-docs"
+  echo "precious" > "$H/.agents/skills/test-docs/user-data.txt"
+  run_installer --uninstall
+  assert_rc 2
+  assert_exists "$H/.agents/skills/test-docs/user-data.txt"
+  assert_contains "no longer our symlink" "$OUT"
 }
 
 scenario_uninstall_dry_run() {
@@ -734,8 +788,13 @@ function Setup-Scratch {
 
 function Run-Installer {
   param([string[]]$Flags = @())
+  # Localized EAP: under 'Stop', native stderr routed through 2>&1 can raise
+  # NativeCommandError in WinPS 5.1 and abort the whole suite mid-run.
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   $script:Out = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'install.ps1') @Flags 2>&1 | Out-String)
   $script:Rc = $LASTEXITCODE
+  $ErrorActionPreference = $prev
 }
 
 function Expected-Dests {  # independent re-derivation from TSV + globs
@@ -846,6 +905,47 @@ function Scenario-LinkThenCopyCloneIntact {
   Assert-Exists (Join-Path $Repo 'agents\doc-follower.md')
 }
 
+function Scenario-CopyThenLink {
+  Setup-Scratch
+  Run-Installer;            Assert-Rc 0
+  Run-Installer @('-Link'); Assert-Rc 0
+  Assert-Symlink (Join-Path $H '.agents\skills\test-docs')
+}
+
+function Scenario-LinkUninstallClean {
+  Setup-Scratch
+  Run-Installer @('-Link');      Assert-Rc 0
+  Run-Installer @('-Uninstall'); Assert-Rc 0
+  Expected-Dests | ForEach-Object { Assert-Missing $_ }
+  Assert-Missing $Receipt
+  Assert-Missing (Join-Path $H '.agents')
+}
+
+function Scenario-UninstallSkipsForeignLink {
+  Setup-Scratch
+  Run-Installer @('-Link'); Assert-Rc 0
+  $d = Join-Path $H '.agents\skills\test-docs'
+  [IO.Directory]::Delete($d, $false)              # remove our link object
+  New-Item -ItemType SymbolicLink -Path $d -Value $Scratch | Out-Null
+  Run-Installer @('-Uninstall')
+  Assert-Rc 2
+  Assert-Symlink $d
+  Assert-Contains 'leaving it'
+}
+
+function Scenario-UninstallLeavesReplacedLinkDest {
+  Setup-Scratch
+  Run-Installer @('-Link'); Assert-Rc 0
+  $d = Join-Path $H '.agents\skills\test-docs'
+  [IO.Directory]::Delete($d, $false)              # remove our link object
+  New-Item -ItemType Directory -Path $d | Out-Null
+  Set-Content -LiteralPath (Join-Path $d 'user-data.txt') -Value 'precious'
+  Run-Installer @('-Uninstall')
+  Assert-Rc 2
+  Assert-Exists (Join-Path $d 'user-data.txt')    # never rm -rf'd
+  Assert-Contains 'no longer our symlink'
+}
+
 function Scenario-UninstallLeavesNothing {
   Setup-Scratch
   Run-Installer; Assert-Rc 0
@@ -871,7 +971,11 @@ $scenarios = @(
   'Scenario-UninstallLeavesNothing', 'Scenario-UninstallDryRun'
 )
 if (Can-Symlink) {
-  $scenarios += @('Scenario-LinkInstall', 'Scenario-LinkThenCopyCloneIntact')
+  $scenarios += @(
+    'Scenario-LinkInstall', 'Scenario-LinkThenCopyCloneIntact',
+    'Scenario-CopyThenLink', 'Scenario-LinkUninstallClean',
+    'Scenario-UninstallSkipsForeignLink', 'Scenario-UninstallLeavesReplacedLinkDest'
+  )
 } else {
   Write-Output 'NOTICE: symlinks unavailable on this runner — link scenarios skipped'
 }
@@ -935,10 +1039,14 @@ function Check-Disjoint {
   } }
 }
 
-function Report-Skips {
+function Report-Skips {  # harness-detection report: names every found AND skipped detect dir
   Get-Rows | ForEach-Object {
-    if ($_.Detect -ne '-' -and -not (Test-Path -LiteralPath (Expand-Dest $_.Detect) -PathType Container)) {
-      Note ("skipped: " + (Expand-Dest $_.Detect) + " not found (no " + $_.Content + " for that harness)")
+    if ($_.Detect -eq '-') { return }
+    $d = Expand-Dest $_.Detect
+    if (Test-Path -LiteralPath $d -PathType Container) {
+      Note ("found: $d (" + $_.Content + " will be installed)")
+    } else {
+      Note ("skipped: $d not found (no " + $_.Content + " for that harness)")
     }
   }
 }
@@ -1001,8 +1109,10 @@ function Ensure-Dir($d) {
   Ensure-Dir (Split-Path -Parent $d)
   Note "mkdir: $d"
   if (-not $DryRun) {
-    New-Item -ItemType Directory -Path $d | Out-Null
-    Receipt-Append 'dir' '-' $d
+    Receipt-Append 'dir' '-' $d   # append-before-act
+    if (-not (Test-Path -LiteralPath $d -PathType Container)) {
+      New-Item -ItemType Directory -Path $d | Out-Null
+    }
   }
 }
 
@@ -1010,9 +1120,9 @@ function Receipt-Append($mode, $src, $dest) {
   if ($DryRun) { return }
   if (-not (Test-Path -LiteralPath $Receipt)) {
     New-Item -ItemType Directory -Path $ReceiptDir -Force | Out-Null  # unrecorded by design
-    Set-Content -LiteralPath $Receipt -Value $ReceiptHeader -Encoding ASCII
+    Set-Content -LiteralPath $Receipt -Value $ReceiptHeader -Encoding UTF8
   }
-  Add-Content -LiteralPath $Receipt -Value ("{0}`t{1}`t{2}" -f $mode, $src, $dest) -Encoding ASCII
+  Add-Content -LiteralPath $Receipt -Value ("{0}`t{1}`t{2}" -f $mode, $src, $dest) -Encoding UTF8
 }
 
 function Receipt-Current {  # deduped: last line per folded dest wins; order preserved
@@ -1030,7 +1140,16 @@ function Receipt-Current {  # deduped: last line per folded dest wins; order pre
 }
 
 function Remove-Owned($mode, $src, $dest) {
-  if ((Test-IsLinkPath $dest) -and $mode -eq 'link') {
+  if ($mode -eq 'link') {
+    # A link entry may only ever delete a symlink still pointing at our
+    # source. A real file/dir at that path is the user's now.
+    if (-not (Test-IsLinkPath $dest)) {
+      if (Test-Path -LiteralPath $dest) {
+        Note "warning: $dest is no longer our symlink — leaving it"
+        $script:Status = 2
+      }
+      return
+    }
     $target = Get-LinkTarget $dest
     if (-not $target -or (Fold $target) -ne (Fold $src)) {
       Note "warning: $dest points at '$target', not our '$src' — leaving it"
@@ -1063,9 +1182,9 @@ function Compact-ReceiptAndPrune {
   }
   if ($DryRun) { return }
   $tmp = "$Receipt.tmp.$PID"
-  Set-Content -LiteralPath $tmp -Value $ReceiptHeader -Encoding ASCII
+  Set-Content -LiteralPath $tmp -Value $ReceiptHeader -Encoding UTF8
   foreach ($e in $keep) {
-    Add-Content -LiteralPath $tmp -Value ("{0}`t{1}`t{2}" -f $e.Mode, $e.Src, $e.Dest) -Encoding ASCII
+    Add-Content -LiteralPath $tmp -Value ("{0}`t{1}`t{2}" -f $e.Mode, $e.Src, $e.Dest) -Encoding UTF8
   }
   Move-Item -LiteralPath $tmp -Destination $Receipt -Force
 }
@@ -1170,6 +1289,7 @@ exit $script:Status
 name: installer-tests
 on:
   push:
+    branches: [main]   # PRs covered by pull_request; avoids double-runs
   pull_request:
 
 jobs:
@@ -1194,7 +1314,7 @@ jobs:
 ```
 
 - [ ] **Step 2: Verify locally what can be verified** — `uvx --from yamllint yamllint .github/workflows/installer-tests.yml` (or skip if offline) and `/bin/bash tests/installer/run_sh_tests.sh` once more.
-- [ ] **Step 3: Commit and push the branch** (mint the dispatch-bot token first: `eval "$(dispatch mint-token 2>/dev/null)" || true`), then check the run: `git push -u origin claude/installer && gh run watch` — all three jobs green. If the Windows job fails, fix forward in this task; the ps1 suite has never truly run before this step.
+- [ ] **Step 3: Commit and push the branch** (mint the dispatch-bot token first: `eval "$(dispatch mint-token 2>/dev/null)" || true`), then push and watch the run non-interactively: `git push -u origin claude/installer && sleep 10 && gh run watch $(gh run list -L1 --json databaseId -q '.[0].databaseId') --exit-status` — all three jobs green. (Note: with `on: push` limited to `main`, the branch run appears once the PR is opened; alternatively open the PR first, then watch.) If the Windows job fails, fix forward in this task; the ps1 suite has never truly run before this step.
 Expected: three green jobs.
 - [ ] **Step 4: Commit any CI-driven fixes** — `git commit -am "fix(installer): windows CI fixes"` (only if needed).
 
@@ -1249,12 +1369,16 @@ Installed **copies are owned by the installer** — local edits to them are
 discarded on update and uninstall. To customize content, fork the repo or
 install with `--link` against your own clone.
 
+On Windows, pick one script and stick with it: Git Bash's `install.sh` and
+PowerShell's `install.ps1` record paths differently and cannot manage each
+other's installs.
+
 Adding a harness later is one line in `harnesses.tsv`; adding new content
 is zero lines — the installer globs `skills/`, `agents/`, and `commands/`
 at runtime.
 ```
 
-- [ ] **Step 2: Sanity check on the real machine (read-only):** `./install.sh --dry-run` from the repo root **without** `AI_TOOLING_HOME` set. Expected: it lists planned installs into the real `~/.agents/skills`, `~/.claude/{skills,agents}`, notes `~/.codex` detection, creates/modifies nothing (verify: `ls ~/.agents/.ai-tooling-receipt` → still absent). Do NOT run a real install — Tom's `~/.claude/skills/test-docs` is a pre-existing symlink the safety rule would (correctly) skip; leave his setup alone.
+- [ ] **Step 2: Sanity check on the real machine (read-only):** `./install.sh --dry-run` from the repo root **without** `AI_TOOLING_HOME` set. Expected: **exit code 2**, not 0 — Tom's pre-existing `~/.claude/skills/test-docs` and `~/.claude/agents/doc-follower.md` symlinks (the old manual install) are correctly reported as `skip (exists, not ours…)`; that is the safety rule working, not a bug. Also expected: `found:` lines for `~/.claude` and `~/.codex`, planned installs listed into the real `~/.agents/skills`, and nothing created (verify: `ls ~/.agents/.ai-tooling-receipt` → still absent). Do NOT run a real install; leave Tom's setup alone.
 - [ ] **Step 3: Run both test suites one final time** — expected all green.
 - [ ] **Step 4: Commit** — `git add README.md && git commit -m "docs: installer README — one-command install, flags, routing"`
 - [ ] **Step 5: Open the PR** (dispatch-bot token, base `main`, head `claude/installer`). Body: summary, link to spec, note the two still-unverified Codex claims and the Windows CI evidence.
@@ -1266,3 +1390,6 @@ at runtime.
 - Known cosmetic issue, accepted: under `--dry-run` on a fresh home, `mkdir:` lines repeat per unit (nothing is actually created, so the "already exists" suppression never kicks in).
 - If any scenario fails on macOS but passes on Linux, suspect bash 3.2 (`set -u` + empty arrays, `${var,,}`) or BSD vs GNU userland (`sed -i`, `readlink -f` — neither is used; keep it that way).
 - The `commands → ~/.codex/prompts` row ships unverified (no Codex CLI available). Do not silently drop it; the README marks it.
+- Accepted, not fixed: PS 5.1 `Remove-Item -Recurse` on a **non-link** directory can traverse symlinks the user planted *inside* an installed copy. Reachable only via user-modified installed copies, which the README declares discardable.
+- Git Bash `install.sh` and `install.ps1` must not co-manage one machine (different path styles in the same receipt); the README says pick one.
+- Test scratch dirs accumulate under the system temp dir; harmless locally, and CI runners are ephemeral.
