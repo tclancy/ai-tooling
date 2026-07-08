@@ -1,0 +1,9 @@
+# content	detect_dir	dest_dir
+# The '-' row is the universal agentskills location (Codex & friends).
+# Claude Code verified NOT to scan it (2026-07-08), hence its own row.
+# No commands row for Claude Code: skills already register the slash
+# command there and the names would collide.
+skills	-	~/.agents/skills
+skills	~/.claude	~/.claude/skills
+agents	~/.claude	~/.claude/agents
+commands	~/.codex	~/.codex/prompts
