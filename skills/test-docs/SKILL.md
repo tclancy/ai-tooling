@@ -29,10 +29,12 @@ fixes as a pull request whose description is the log of what was broken.
    user's machine would have (their installed tools on PATH). Gather real or
    stand-in values. These go to the tester as *possessions*, never as
    instructions or knowledge.
-4. **Workspace.** Prefer a fresh clone or worktree per iteration — leftover
+4. **Workspace.** Use a fresh clone or worktree per iteration — leftover
    state (installed dependencies, migrated databases, generated files) masks
-   doc gaps. When impractical, reset what you can and record the known
-   contamination in the log.
+   doc gaps. A local `git clone` of the target repo is cheap; re-stage the
+   pocket contents after each clone. If a fresh workspace is genuinely
+   impractical (huge repo, licensed data), reset what you can and record the
+   known contamination in the log.
 5. **Branch.** Create a docs-fix branch in the target repo. Start an
    iteration log; it becomes the PR body.
 6. **Iteration cap.** Default 5.
@@ -62,6 +64,12 @@ fixes as a pull request whose description is the log of what was broken.
    already reset. Don't trust the tester to have done it.
 5. **Repeat** from step 1 — fresh workspace, fresh tester — until SUCCESS
    or the cap.
+
+**SUCCESS only counts from a fresh workspace.** A green run in a reused
+workspace is provisional: it may have passed only because an earlier
+iteration installed the dependencies or seeded the database. Before
+declaring the docs sufficient, rerun the goal once in a clean clone or
+worktree. If that rerun gets stuck, it's a finding like any other.
 
 ## Finish
 
