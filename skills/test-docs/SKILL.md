@@ -18,6 +18,15 @@ fixes as a pull request whose description is the log of what was broken.
   a fresh context every iteration. It follows the docs literally and reports
   stuck-points. **REQUIRED companion:** the `doc-follower` agent definition
   (agents/doc-follower.md in this toolkit).
+- **doc-follower, browser variant** — for docs that live inside a running
+  app (help pages, in-UI copy), which the Read+Bash agent can't reach.
+  Spawn a general-purpose agent with browser tools and inline the
+  doc-follower rules into its prompt; its "one rule" becomes *the help
+  pages plus what the app's own screens show*. Pocket contents generalize:
+  an email inbox can be a shell script, a phone can be the browser tools.
+  Cheapest-model caveat: in a browser, comprehension is rarely the
+  bottleneck — clicking is. Read the step log to separate motor failure
+  from comprehension failure before accepting a STUCK.
 
 ## Setup (once)
 
@@ -28,15 +37,21 @@ fixes as a pull request whose description is the log of what was broken.
    and known limitations (e.g., a credential the permission layer won't let
    you stage). Update it whenever any of those change. It carries machine
    paths and credential pointers, so keep it untracked — never in the docs PR.
+   Your rig is part of the docs' contract: an orchestrator-side misconfiguration
+   (a missing env var, a wrong port) manufactures findings that look exactly
+   like real doc bugs — record every setting the app needs in the runbook.
 2. **Target + goal.** The invocation's arguments name what to test: an
    entry doc path, a served URL (e.g. a web app's `/help/` pages — the
    runbook or you must get that server running first, and the entry point
    handed to the tester is the URL), or a prose goal. Only when no
    arguments were given, default to the README quickstart, end to end.
-3. **Success criterion.** Make it observable before the first run: a command
-   exits 0, a server answers on a port, a file appears. Write it down. A
-   web page or UI deliverable "appearing" is not observable enough — its
-   criterion is that it renders without console errors.
+3. **Success criterion.** Make it observable before the first run, and make
+   it test **fitness, not existence**. "Exits 0" or "the file appears" is
+   the weakest acceptable bar; if the journey produces something a human
+   consumes (a page, a report, an image), the criterion is a consumption
+   check — open it the way a user would. If the journey mutates state,
+   verify completion in the datastore, never from the tester's claim
+   (claims are wrong in both directions). Write it down.
 4. **Pocket contents.** List what the docs legitimately expect users to
    bring (API keys, data exports, accounts) plus environment facts a real
    user's machine would have (their installed tools on PATH). Gather real or
@@ -45,9 +60,11 @@ fixes as a pull request whose description is the log of what was broken.
 5. **Workspace.** Use a fresh clone or worktree per iteration — leftover
    state (installed dependencies, migrated databases, generated files) masks
    doc gaps. A local `git clone` of the target repo is cheap; re-stage the
-   pocket contents after each clone. If a fresh workspace is genuinely
-   impractical (huge repo, licensed data), reset what you can and record the
-   known contamination in the log.
+   pocket contents after each clone. For stateful apps, "fresh" also means
+   a fresh identity and wiped state — a new user, empty rows — not just a
+   fresh clone. If a fresh workspace is genuinely impractical (huge repo,
+   licensed data), reset what you can and record the known contamination
+   in the log.
 6. **Branch.** Create a docs-fix branch in the target repo. Start an
    iteration log; it becomes the PR body.
 7. **Iteration cap.** Default 5.
@@ -57,7 +74,13 @@ fixes as a pull request whose description is the log of what was broken.
 1. **Spawn a fresh doc-follower** with: repo path, entry doc, goal, pocket
    contents. Fresh context every time — never tell it what previous testers
    found or how they got past anything. A tester that inherits workarounds
-   stops testing the docs.
+   stops testing the docs. Mid-run you may resume a stuck tester with
+   **tooling/motor guidance** — how to drive its own tools ("use form_input
+   for text fields") — but never content the docs are supposed to teach
+   ("the flag is under the expander"), and no laundered versions either
+   ("try looking under expanders" when you know that's where it is). If the
+   tester can't find something from the docs and screens alone, that IS the
+   finding — report it, don't rescue it.
 2. **On SUCCESS, render the deliverables yourself.** The tester checks
    file-exists; you check the files work. Load every generated page in a
    headless browser and check three things: console/page errors, the page's
@@ -70,7 +93,13 @@ fixes as a pull request whose description is the log of what was broken.
    render is a finding like any other — classify it (usually a code bug),
    and the screenshot is its evidence for the PR.
 3. **On STUCK, triage before editing.** Reproduce or verify the report,
-   then classify:
+   then classify — and ask the first question first, because rig failures
+   impersonate every other category:
+   - **Harness error** — the test rig caused it, not the repo: a browser
+     extension intercepting input, the tester's tool limits, your own
+     misconfigured environment presenting as a "broken" doc step. Void the
+     iteration (it's not a finding), fix the rig, note it in the runbook,
+     rerun.
    - **Doc gap** — missing step, wrong command, unstated prerequisite →
      fix the docs.
    - **Code bug** — the docs are right, the software is wrong → log it,
@@ -78,6 +107,13 @@ fixes as a pull request whose description is the log of what was broken.
    - **Tester error** — the answer IS in the docs and discoverable from the
      entry point → log as a discoverability finding; consider moving or
      linking the information rather than duplicating it.
+
+   **Same wall twice despite a fix = stop rewording.** When successive
+   testers die at the same step after progressively better text — above all
+   when any tester ever got through it — the information isn't the problem,
+   the affordance is. Reclassify as a code/UX finding — logged, not fixed,
+   same as any code bug — and end the loop for that goal rather than
+   burning the cap on a paragraph that was never the problem.
 4. **Author the minimal doc fix.** Write for the user who just hit the wall.
    Verify every claim against the actual code and behavior — you can read
    the source; the tester can't, and neither can the next reader. Commit
@@ -85,7 +121,9 @@ fixes as a pull request whose description is the log of what was broken.
 5. **Log it:** iteration number, stuck-point, classification, fix commit.
    Then clean up the tester's side effects yourself — stray servers or
    background processes, generated state your workspace strategy doesn't
-   already reset. Don't trust the tester to have done it.
+   already reset, browser tabs that `--open`-style flags spawned in the
+   user's real browser, and staged pocket data (often PII) — deliberate
+   deletion, not session GC. Don't trust the tester to have done it.
 6. **Repeat** from step 1 — fresh workspace, fresh tester — until SUCCESS
    or the cap.
 
