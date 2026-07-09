@@ -40,7 +40,11 @@ Clone the repo, then from its root:
 | Platform | Command |
 |---|---|
 | Linux / macOS / Git Bash | `./install.sh` |
-| Windows (PowerShell) | `.\install.ps1` |
+| Windows (PowerShell) | `powershell -ExecutionPolicy Bypass -File .\install.ps1` |
+
+Windows needs the `-ExecutionPolicy Bypass` because PowerShell's default
+`Restricted` policy blocks all scripts; if you downloaded the repo as a zip
+rather than cloning, you may also need to `Unblock-File` the scripts first.
 
 That copies every skill, agent, and command into the right place for each
 agent harness found on your machine. Re-run after a `git pull` to update —
@@ -50,7 +54,7 @@ re-runs are exact: renamed or removed content is cleaned up, not orphaned.
 |---|---|
 | `--link` / `-Link` | Symlink from your clone instead of copying, so the clone stays the source of truth. On Windows this needs Developer Mode or an elevated shell. |
 | `--uninstall` / `-Uninstall` | Remove everything the installer put down — and nothing else. |
-| `--dry-run` / `-DryRun` | Show what would happen, including which harnesses were detected. |
+| `--dry-run` / `-DryRun` | Show what would happen; on install it also reports which harnesses were detected. |
 | `--force` / `-Force` | Claim a destination that already existed before the installer ran. Without it, such paths are warned about and skipped (exit code 2). |
 
 ### Where things go
