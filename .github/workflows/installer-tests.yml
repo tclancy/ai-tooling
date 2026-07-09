@@ -1,7 +1,8 @@
 name: installer-tests
 on:
   push:
-    branches: [main]   # PRs covered by pull_request; avoids double-runs
+    branches: [main, claude/installer]   # TEMP: verifying CI on this branch pre-PR; reverted after
+                                          # PRs covered by pull_request; avoids double-runs
   pull_request:
   workflow_dispatch:   # lets maintainers re-run CI manually
 
