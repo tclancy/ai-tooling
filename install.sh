@@ -165,6 +165,68 @@ remove_path() {  # link-aware delete: a link is removed as an object, never trav
   fi
 }
 
+receipt_current() {  # deduped receipt: last line per (folded) dest wins
+  [ -f "$RECEIPT" ] || return 0
+  awk -F'\t' -v fold="$CASE_FOLD" '
+    /^#/ { next } NF < 3 { next }
+    {
+      key = $3; if (fold) key = tolower(key)
+      line[key] = $0
+      if (!(key in seen)) { order[++n] = key; seen[key] = 1 }
+    }
+    END { for (i = 1; i <= n; i++) print line[order[i]] }
+  ' "$RECEIPT"
+}
+
+remove_owned() {  # mode src dest — dest is receipt-listed; verify link entries before deleting
+  local mode="$1" src="$2" dest="$3" target
+  if [ "$mode" = link ]; then
+    # A link entry may only ever delete a symlink still pointing at our
+    # source. If the user replaced our link with a real file/dir (or
+    # repointed it), it is theirs now — leave it.
+    if [ ! -L "$dest" ]; then
+      if [ -e "$dest" ]; then
+        note "warning: $dest is no longer our symlink — leaving it"
+        STATUS=2
+      fi
+      return 0
+    fi
+    target="$(readlink "$dest")"
+    if [ "$(fold "$target")" != "$(fold "$src")" ]; then
+      note "warning: $dest points at '$target', not our '$src' — leaving it"
+      STATUS=2
+      return 0
+    fi
+  fi
+  remove_path "$dest"
+}
+
+compact_receipt_and_prune() {
+  [ -f "$RECEIPT" ] || return 0
+  local planned_f tmp mode src dest
+  planned_f="$(mktemp)"
+  planned | cut -f2 | while IFS= read -r dest; do fold "$dest"; done > "$planned_f"
+  tmp="$RECEIPT.tmp.$$"
+  printf '%s\n' "$RECEIPT_HEADER" > "$tmp"
+  while IFS=$'\t' read -r mode src dest; do
+    [ -n "$mode" ] || continue
+    if [ "$mode" = dir ] || grep -Fxq "$(fold "$dest")" "$planned_f"; then
+      printf '%s\t%s\t%s\n' "$mode" "$src" "$dest" >> "$tmp"
+    else
+      note "remove stale: $dest"
+      if [ "$DRY" = 1 ]; then
+        printf '%s\t%s\t%s\n' "$mode" "$src" "$dest" >> "$tmp"
+      else
+        remove_owned "$mode" "$src" "$dest"
+      fi
+    fi
+  done <<EOF_RCPT
+$(receipt_current)
+EOF_RCPT
+  if [ "$DRY" = 1 ]; then rm -f "$tmp"; else mv "$tmp" "$RECEIPT"; fi
+  rm -f "$planned_f"
+}
+
 install_unit() {  # src dest
   local src="$1" dest="$2"
   ensure_dir "$(dirname "$dest")"
@@ -181,6 +243,7 @@ install_unit() {  # src dest
 }
 
 do_install() {
+  compact_receipt_and_prune
   local src dest
   while IFS=$'\t' read -r src dest; do
     install_unit "$src" "$dest"

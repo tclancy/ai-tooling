@@ -32,6 +32,40 @@ scenario_fresh_install() {
   done
 }
 
+scenario_rerun_idempotent() {
+  setup_scratch
+  run_installer
+  assert_rc 0
+  run_installer
+  assert_rc 0
+  run_installer
+  assert_rc 0
+  while IFS= read -r d; do assert_exists "$d"; done < <(expected_dests)
+  # Compaction bound: every run dedupes to 1 unit line per dest, then
+  # appends 1 more — so after ANY number of re-runs there are exactly 2.
+  # Without compaction, three runs would leave 3 per dest (this is what
+  # makes the scenario fail before Task 2's implementation).
+  local n_dests n_lines
+  n_dests="$(expected_dests | wc -l | tr -d ' ')"
+  n_lines="$(awk -F'\t' 'NF >= 3 && $1 != "dir"' "$H/$RECEIPT_REL" | wc -l | tr -d ' ')"
+  [ "$n_lines" = "$((2 * n_dests))" ] || fail "receipt not compacted: $n_lines unit lines for $n_dests dests"
+}
+
+scenario_rename_cleans_orphan() {
+  setup_scratch
+  run_installer
+  assert_rc 0
+  mv "$REPO/skills/test-docs" "$REPO/skills/test-docs-renamed"
+  run_installer
+  assert_rc 0
+  assert_missing "$H/.agents/skills/test-docs"
+  assert_missing "$H/.claude/skills/test-docs"
+  assert_exists  "$H/.agents/skills/test-docs-renamed"
+  assert_exists  "$H/.claude/skills/test-docs-renamed"
+}
+
 run_scenarios \
   scenario_dry_run_touches_nothing \
-  scenario_fresh_install
+  scenario_fresh_install \
+  scenario_rerun_idempotent \
+  scenario_rename_cleans_orphan
