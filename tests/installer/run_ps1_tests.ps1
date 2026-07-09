@@ -211,3 +211,4 @@ if (Can-Symlink) {
 foreach ($s in $scenarios) { Write-Output "== $s"; & $s }
 if ($script:Fail -ne 0) { Write-Output 'RESULT: FAIL'; exit 1 }
 Write-Output 'RESULT: ALL PASS'
+exit 0
