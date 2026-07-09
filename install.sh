@@ -201,6 +201,18 @@ remove_owned() {  # mode src dest — dest is receipt-listed; verify link entrie
   remove_path "$dest"
 }
 
+is_ours() {  # 0 iff receipt lists $1 (folded compare); avoids grep -q under pipefail
+  [ -f "$RECEIPT" ] || return 1
+  local found=1 mode src dest
+  while IFS=$'\t' read -r mode src dest; do
+    [ -n "$dest" ] || continue
+    [ "$(fold "$dest")" = "$(fold "$1")" ] && found=0
+  done <<EOF_OURS
+$(receipt_current)
+EOF_OURS
+  return "$found"
+}
+
 compact_receipt_and_prune() {
   [ -f "$RECEIPT" ] || return 0
   local planned_f tmp mode src dest
@@ -246,6 +258,11 @@ do_install() {
   compact_receipt_and_prune
   local src dest
   while IFS=$'\t' read -r src dest; do
+    if { [ -e "$dest" ] || [ -L "$dest" ]; } && [ "$FORCE" = 0 ] && ! is_ours "$dest"; then
+      note "skip (exists, not ours — rerun with --force to claim): $dest"
+      STATUS=2
+      continue
+    fi
     install_unit "$src" "$dest"
   done <<EOF_PLAN
 $(planned)

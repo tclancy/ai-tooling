@@ -64,8 +64,24 @@ scenario_rename_cleans_orphan() {
   assert_exists  "$H/.claude/skills/test-docs-renamed"
 }
 
+scenario_foreign_dest_skipped_then_forced() {
+  setup_scratch
+  mkdir -p "$H/.agents/skills/test-docs"
+  echo "precious user file" > "$H/.agents/skills/test-docs/mine.txt"
+  run_installer
+  assert_rc 2
+  assert_exists "$H/.agents/skills/test-docs/mine.txt"      # untouched
+  assert_exists "$H/.claude/skills/test-docs/SKILL.md"      # everything else proceeded
+  assert_contains "skip (exists, not ours" "$OUT"
+  run_installer --force
+  assert_rc 0
+  assert_missing "$H/.agents/skills/test-docs/mine.txt"     # claimed and replaced
+  assert_exists  "$H/.agents/skills/test-docs/SKILL.md"
+}
+
 run_scenarios \
   scenario_dry_run_touches_nothing \
   scenario_fresh_install \
   scenario_rerun_idempotent \
-  scenario_rename_cleans_orphan
+  scenario_rename_cleans_orphan \
+  scenario_foreign_dest_skipped_then_forced
