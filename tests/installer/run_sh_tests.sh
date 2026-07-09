@@ -79,9 +79,46 @@ scenario_foreign_dest_skipped_then_forced() {
   assert_exists  "$H/.agents/skills/test-docs/SKILL.md"
 }
 
+scenario_link_install() {
+  setup_scratch
+  run_installer --link
+  assert_rc 0
+  assert_symlink "$H/.agents/skills/test-docs"
+  assert_symlink "$H/.claude/agents/doc-follower.md"
+  [ "$(readlink "$H/.agents/skills/test-docs")" = "$REPO/skills/test-docs" ] \
+    || fail "link target"
+  grep -q "^link" "$H/$RECEIPT_REL" || fail "receipt records link mode"
+}
+
+scenario_link_then_copy_clone_intact() {
+  setup_scratch
+  run_installer --link
+  assert_rc 0
+  run_installer            # mode switch: copy replaces links
+  assert_rc 0
+  assert_not_symlink "$H/.agents/skills/test-docs"
+  assert_exists "$H/.agents/skills/test-docs/SKILL.md"
+  # THE assertion this scenario exists for: replacing a dir link must not
+  # have deleted through it into the clone.
+  assert_exists "$REPO/skills/test-docs/SKILL.md"
+  assert_exists "$REPO/agents/doc-follower.md"
+}
+
+scenario_copy_then_link() {
+  setup_scratch
+  run_installer
+  assert_rc 0
+  run_installer --link
+  assert_rc 0
+  assert_symlink "$H/.agents/skills/test-docs"
+}
+
 run_scenarios \
   scenario_dry_run_touches_nothing \
   scenario_fresh_install \
   scenario_rerun_idempotent \
   scenario_rename_cleans_orphan \
-  scenario_foreign_dest_skipped_then_forced
+  scenario_foreign_dest_skipped_then_forced \
+  scenario_link_install \
+  scenario_link_then_copy_clone_intact \
+  scenario_copy_then_link
