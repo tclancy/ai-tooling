@@ -269,6 +269,34 @@ $(planned)
 EOF_PLAN
 }
 
+do_uninstall() {
+  if [ ! -f "$RECEIPT" ]; then
+    note "nothing to uninstall (no receipt at $RECEIPT)"
+    return 0
+  fi
+  local entries mode src dest
+  entries="$(receipt_current)"   # capture BEFORE deleting the receipt
+  while IFS=$'\t' read -r mode src dest; do
+    [ -n "$mode" ] && [ "$mode" != dir ] || continue
+    note "remove: $dest"
+    if [ "$DRY" = 0 ]; then
+      if [ "$FORCE" = 1 ]; then remove_path "$dest"; else remove_owned "$mode" "$src" "$dest"; fi
+    fi
+  done <<EOF_UNITS
+$entries
+EOF_UNITS
+  note "remove: $RECEIPT"
+  [ "$DRY" = 1 ] || rm -f "$RECEIPT"
+  while IFS=$'\t' read -r mode src dest; do
+    [ "$mode" = dir ] || continue
+    note "rmdir (if empty): $dest"
+    [ "$DRY" = 1 ] || rmdir "$dest" 2>/dev/null || true
+  done <<EOF_DIRS
+$(printf '%s\n' "$entries" | awk -F'\t' '$1=="dir" { print length($3) "\t" $0 }' | sort -rn | cut -f2-)
+EOF_DIRS
+  [ "$DRY" = 1 ] || rmdir "$RECEIPT_DIR" 2>/dev/null || true
+}
+
 main() {
   [ -f "$TSV" ] || die "missing $TSV"
   check_disjoint
@@ -276,7 +304,7 @@ main() {
     report_skips
     do_install
   else
-    die "uninstall not implemented yet"
+    do_uninstall
   fi
   [ "$STATUS" = 2 ] && note "completed with skips (rerun with --force to claim them)"
   exit "$STATUS"

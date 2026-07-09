@@ -113,6 +113,59 @@ scenario_copy_then_link() {
   assert_symlink "$H/.agents/skills/test-docs"
 }
 
+scenario_uninstall_leaves_nothing() {
+  setup_scratch
+  run_installer
+  assert_rc 0
+  run_installer --uninstall
+  assert_rc 0
+  while IFS= read -r d; do assert_missing "$d"; done < <(expected_dests)
+  assert_missing "$H/$RECEIPT_REL"
+  assert_missing "$H/.agents"            # created by us -> pruned
+  assert_missing "$H/.claude/skills"     # created by us -> pruned
+  assert_exists  "$H/.claude"            # pre-existing -> untouched
+  assert_exists  "$H/.codex"             # pre-existing -> untouched
+}
+
+scenario_uninstall_skips_foreign_link() {
+  setup_scratch
+  run_installer --link
+  assert_rc 0
+  rm "$H/.agents/skills/test-docs"
+  ln -s "$SCRATCH" "$H/.agents/skills/test-docs"   # user repointed it
+  run_installer --uninstall
+  assert_rc 2
+  assert_symlink "$H/.agents/skills/test-docs"     # left alone
+  assert_contains "leaving it" "$OUT"
+  assert_missing "$H/.claude/agents/doc-follower.md"  # rest removed
+}
+
+scenario_uninstall_leaves_replaced_link_dest() {
+  setup_scratch
+  run_installer --link
+  assert_rc 0
+  # user deletes our link and puts a REAL directory in its place —
+  # a link-mode receipt entry must never rm -rf a non-link dest
+  rm "$H/.agents/skills/test-docs"
+  mkdir -p "$H/.agents/skills/test-docs"
+  echo "precious" > "$H/.agents/skills/test-docs/user-data.txt"
+  run_installer --uninstall
+  assert_rc 2
+  assert_exists "$H/.agents/skills/test-docs/user-data.txt"
+  assert_contains "no longer our symlink" "$OUT"
+}
+
+scenario_uninstall_dry_run() {
+  setup_scratch
+  run_installer
+  assert_rc 0
+  run_installer --uninstall --dry-run
+  assert_rc 0
+  assert_exists "$H/$RECEIPT_REL"
+  while IFS= read -r d; do assert_exists "$d"; done < <(expected_dests)
+  assert_contains "remove:" "$OUT"
+}
+
 run_scenarios \
   scenario_dry_run_touches_nothing \
   scenario_fresh_install \
@@ -121,4 +174,8 @@ run_scenarios \
   scenario_foreign_dest_skipped_then_forced \
   scenario_link_install \
   scenario_link_then_copy_clone_intact \
-  scenario_copy_then_link
+  scenario_copy_then_link \
+  scenario_uninstall_leaves_nothing \
+  scenario_uninstall_skips_foreign_link \
+  scenario_uninstall_leaves_replaced_link_dest \
+  scenario_uninstall_dry_run
