@@ -20,7 +20,7 @@ $Mode = if ($Link) { 'link' } else { 'copy' }
 $script:Status = 0
 
 function Note($m) { Write-Output $m }
-function Fail-Hard($m) { Write-Output "error: $m"; exit 1 }
+function Fail-Hard($m) { [Console]::Error.WriteLine("error: $m"); exit 1 }
 function Fold($s) { "$s".ToLowerInvariant() }   # Windows: always case-insensitive
 
 function Expand-Dest($p) {
@@ -34,7 +34,8 @@ function Get-Rows {
   Get-Content -LiteralPath $Tsv | ForEach-Object {
     if ($_ -match '^\s*$' -or $_ -match '^#') { return }
     $f = $_ -split "`t"
-    if ($f.Count -lt 3 -or -not $f[1] -or -not $f[2]) { Fail-Hard "harnesses.tsv: malformed row: $_" }
+    if ($f.Count -ne 3 -or -not $f[1] -or -not $f[2]) { Fail-Hard "harnesses.tsv: malformed row: $_" }
+    if ($f[0] -notin @('skills', 'agents', 'commands')) { Fail-Hard "harnesses.tsv: unknown content type '$($f[0])'" }
     [pscustomobject]@{ Content = $f[0]; Detect = $f[1]; Dest = (Expand-Dest $f[2]) }
   }
 }
@@ -277,5 +278,11 @@ if ($Uninstall) {
   Report-Skips
   Do-Install
 }
-if ($script:Status -eq 2) { Note 'completed with skips (rerun with -Force to claim them)' }
+if ($script:Status -eq 2) {
+  if ($Uninstall) {
+    Note 'completed with skips (rerun with -Force to remove them)'
+  } else {
+    Note 'completed with skips (rerun with -Force to claim them)'
+  }
+}
 exit $script:Status

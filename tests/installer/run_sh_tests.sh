@@ -166,6 +166,31 @@ scenario_uninstall_dry_run() {
   assert_contains "remove:" "$OUT"
 }
 
+scenario_bad_tsv_row_hard_error() {
+  setup_scratch
+  printf 'widgets\t-\t~/.widgets\n' >> "$REPO/harnesses.tsv"
+  run_installer
+  assert_rc 1
+  assert_contains "unknown content type" "$OUT"
+  # the hard error must fire BEFORE anything installs: no receipt, no dests
+  assert_missing "$H/$RECEIPT_REL"
+  assert_missing "$H/.agents"
+  assert_missing "$H/.claude/skills"
+  assert_missing "$H/.claude/agents"
+}
+
+scenario_link_uninstall_clean() {
+  setup_scratch
+  run_installer --link
+  assert_rc 0
+  run_installer --uninstall
+  assert_rc 0
+  while IFS= read -r d; do assert_missing "$d"; done < <(expected_dests)
+  assert_missing "$H/$RECEIPT_REL"
+  assert_missing "$H/.agents"            # created by us -> pruned
+  assert_exists  "$H/.claude"            # pre-existing -> untouched
+}
+
 run_scenarios \
   scenario_dry_run_touches_nothing \
   scenario_fresh_install \
@@ -178,4 +203,6 @@ run_scenarios \
   scenario_uninstall_leaves_nothing \
   scenario_uninstall_skips_foreign_link \
   scenario_uninstall_leaves_replaced_link_dest \
-  scenario_uninstall_dry_run
+  scenario_uninstall_dry_run \
+  scenario_bad_tsv_row_hard_error \
+  scenario_link_uninstall_clean

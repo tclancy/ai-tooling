@@ -65,8 +65,15 @@ all_dests() {
   while IFS=$'\t' read -r content detect dest; do
     case "$content" in ''|'#'*) continue ;; esac
     dest="${dest%$'\r'}"   # belt-and-braces vs CRLF checkouts
+    # read folds any 4th+ field into $dest with its tab intact, so a stray
+    # tab here means the row didn't split into exactly 3 fields.
+    case "$dest" in *$'\t'*) die "harnesses.tsv: malformed row: '$content' (need exactly 3 tab-separated fields)" ;; esac
     [ -n "$detect" ] && [ -n "$dest" ] \
       || die "harnesses.tsv: malformed row: '$content' (need 3 tab-separated fields)"
+    case "$content" in
+      skills|agents|commands) : ;;
+      *) die "harnesses.tsv: unknown content type '$content'" ;;
+    esac
     printf '%s\n' "$(expand_tilde "$dest")"
   done < "$TSV"
 }
@@ -306,7 +313,13 @@ main() {
   else
     do_uninstall
   fi
-  [ "$STATUS" = 2 ] && note "completed with skips (rerun with --force to claim them)"
+  if [ "$STATUS" = 2 ]; then
+    if [ "$ACTION" = install ]; then
+      note "completed with skips (rerun with --force to claim them)"
+    else
+      note "completed with skips (rerun with --force to remove them)"
+    fi
+  fi
   exit "$STATUS"
 }
 

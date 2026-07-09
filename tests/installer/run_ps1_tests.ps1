@@ -193,11 +193,25 @@ function Scenario-UninstallDryRun {
   Expected-Dests | ForEach-Object { Assert-Exists $_ }
 }
 
+function Scenario-BadTsvRowHardError {
+  Setup-Scratch
+  Add-Content -LiteralPath (Join-Path $Repo 'harnesses.tsv') -Value "widgets`t-`t~/.widgets"
+  Run-Installer
+  Assert-Rc 1
+  Assert-Contains 'unknown content type'
+  # the hard error must fire BEFORE anything installs: no receipt, no dests
+  Assert-Missing $Receipt
+  Assert-Missing (Join-Path $H '.agents')
+  Assert-Missing (Join-Path $H '.claude\skills')
+  Assert-Missing (Join-Path $H '.claude\agents')
+}
+
 $scenarios = @(
   'Scenario-DryRunTouchesNothing', 'Scenario-FreshInstall',
   'Scenario-RerunIdempotent', 'Scenario-RenameCleansOrphan',
   'Scenario-ForeignDestSkippedThenForced',
-  'Scenario-UninstallLeavesNothing', 'Scenario-UninstallDryRun'
+  'Scenario-UninstallLeavesNothing', 'Scenario-UninstallDryRun',
+  'Scenario-BadTsvRowHardError'
 )
 if (Can-Symlink) {
   $scenarios += @(
