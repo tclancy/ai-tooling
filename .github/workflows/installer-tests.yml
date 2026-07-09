@@ -1,0 +1,25 @@
+name: installer-tests
+on:
+  push:
+    branches: [main]   # PRs covered by pull_request; avoids double-runs
+  pull_request:
+
+jobs:
+  bash:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # /bin/bash on the macOS runner is 3.2 — the compatibility target.
+      - run: /bin/bash tests/installer/run_sh_tests.sh
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell   # Windows PowerShell 5.1, NOT pwsh — the stated target
+    steps:
+      - uses: actions/checkout@v4
+      - run: .\tests\installer\run_ps1_tests.ps1
