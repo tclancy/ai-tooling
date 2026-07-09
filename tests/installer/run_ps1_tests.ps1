@@ -1,4 +1,4 @@
-# Scenario tests for install.ps1 — mirrors run_sh_tests.sh.
+﻿# Scenario tests for install.ps1 — mirrors run_sh_tests.sh.
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script:Fail = 0

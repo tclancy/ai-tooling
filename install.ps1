@@ -1,4 +1,4 @@
-# ai-tooling installer — native Windows (Windows PowerShell 5.1+).
+﻿# ai-tooling installer — native Windows (Windows PowerShell 5.1+).
 # Function-for-function port of install.sh; harnesses.tsv is shared.
 # Spec: docs/superpowers/specs/2026-07-08-installer-design.md
 [CmdletBinding()]
