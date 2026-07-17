@@ -33,6 +33,23 @@ A loop for testing whether a repo's documentation actually works:
 
 The two are a pair: the skill requires the agent.
 
+### cloning-rf-remotes
+
+A playbook for reverse-engineering a 433/315 MHz OOK remote (ceiling fan,
+outlet, garage, doorbell) and replaying it from a microcontroller:
+
+- **`skills/cloning-rf-remotes/SKILL.md`** — the operational spine the physics
+  alone won't give you: an asynchronous capture window that doesn't race the
+  human's button press, replay-verification with the SDR as referee *before*
+  trusting a silent device, and the single A/B capture that tells RF
+  interference apart from a distance/null problem.
+- **`skills/cloning-rf-remotes/reference.md`** — loaded on demand: OOK encoding
+  families, PT2262/PT2260 tri-state decode math, a worked device profile, the
+  pulse-train encoder, and firmware validation limits.
+
+The architectural through-line: the transmitter stays a dumb pulse pump, and
+every protocol, CLI, and web artifact is *derived* from one device profile.
+
 ## Installing
 
 Clone the repo, then from its root:
