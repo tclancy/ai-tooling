@@ -1,4 +1,4 @@
-name: installer-tests
+name: tests
 on:
   push:
     branches: [main]   # PRs covered by pull_request; avoids double-runs
@@ -15,6 +15,15 @@ jobs:
       - uses: actions/checkout@v4
       # /bin/bash on the macOS runner is 3.2 — the compatibility target.
       - run: /bin/bash tests/installer/run_sh_tests.sh
+
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # SHA-pinned to the same v9.0.0 the rest of the fleet uses (awairelement ci.yml).
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      # Asserts SKILL.md's ~40 quoted figures are still calibrate.sh's output.
+      - run: /bin/bash tests/skills/run_sh_tests.sh
 
   windows:
     runs-on: windows-latest

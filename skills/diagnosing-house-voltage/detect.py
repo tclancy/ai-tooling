@@ -69,7 +69,7 @@ def segments(rows):
     return out
 
 
-def runs(rows, threshold, half_width=30):
+def runs(rows, threshold, half_width=30, percentile=0.75):
     """Contiguous windows depressed below a local reference = one load running.
 
     The reference is a high percentile of a sliding neighbourhood rather than a
@@ -80,11 +80,17 @@ def runs(rows, threshold, half_width=30):
     voltage while resting windows outnumber running ones inside it. Once the load
     dominates -- duty above ~70%, or a single run comparable to 2*half_width --
     the reference sinks into the runs and duty is under-reported, silently and
-    all the way to zero. Widen half_width past the longest run you expect.
+    all the way to zero.
+
+    Measured against synth.py fixtures, the run-length limb needs half_width at
+    roughly 1.5x the longest run for an exact answer -- errors are mild up to
+    half_width and severe by 2x. The duty limb has no such fix: past ~70% no
+    half_width recovers the truth, and a wide one on a drifting record returns a
+    plausible wrong answer instead of an obvious zero.
     """
     for i, row in enumerate(rows):
         near = sorted(x["mean"] for x in rows[max(0, i - half_width) : i + half_width + 1])
-        row["dep"] = near[int(0.75 * len(near))] - row["mean"]
+        row["dep"] = near[int(percentile * len(near))] - row["mean"]
     out, cur = [], []
     for row in rows:
         if row["dep"] >= threshold:
@@ -102,7 +108,7 @@ def report(rows, args, tz):
     gaps = [
         (b["t"] - a["t"]).total_seconds() / 60 for a, b in zip(starts, starts[1:])
     ]
-    active = runs(rows, args.depression, args.reference_window)
+    active = runs(rows, args.depression, args.reference_window, args.reference_percentile)
     busy = sum(len(c) for c in active)
 
     print(f"    {len(rows)} windows, {rows[0]['t'].astimezone(tz):%Y-%m-%d %H:%M}"
@@ -139,9 +145,15 @@ def main():
                    help="volts below local reference to count a window as 'load running'")
     p.add_argument("--reference-window", type=int, default=30, metavar="WINDOWS",
                    help="half-width of the neighbourhood the reference percentile is taken"
-                        " over (default 30, i.e. +/-30 min on minute rows). Must exceed the"
-                        " longest run you expect, or duty is under-reported")
+                        " over (default 30, i.e. +/-30 min on minute rows). Wants ~1.5x the"
+                        " longest run you expect; below that, duty is under-reported")
+    p.add_argument("--reference-percentile", type=float, default=0.75, metavar="P",
+                   help="quantile of the neighbourhood used as the resting voltage"
+                        " (default 0.75). Raise it to measure a load whose duty cycle"
+                        " exceeds it; see SKILL.md for what that costs")
     args = p.parse_args()
+    if args.reference_window < 1:
+        p.error("--reference-window must be at least 1 window")
 
     tz = ZoneInfo(args.tz)
     rows = load(args.csv, args)

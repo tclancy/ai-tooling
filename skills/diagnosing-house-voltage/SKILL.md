@@ -98,7 +98,9 @@ is often the only number anyone will act on.
 
 **Quote a duty cycle with the window it came from, or it means nothing.** The same
 pump over one 30-hour record read 46% with the house awake, 20% after midnight, and
-10.6% between 03:00 and 06:00. Only the whole-stint 28.7% is comparable to a monthly
+10.6% between 03:00 and 06:00 (measured in `tclancy/parsons-pulse#33`; these four
+figures come from a private record, so unlike the Tooling section below they cannot be
+re-derived from this repo — cite the source rather than re-deriving them from memory). Only the whole-stint 28.7% is comparable to a monthly
 bill; the overnight figure is three times under it and would have refuted a load that
 was really there. Pick the window that matches what you are comparing against.
 
@@ -149,7 +151,7 @@ downstream of the sensor rather than proving nothing happened.
 | Publishing a verdict from a window that just ended | Wait for the recovery. A restart can arrive minutes after you have declared everything healthy. |
 | A derived number that matches what you expected | Agreement with a prior estimate is a reason to re-check the derivation, not to stop. Two wrong things can agree. |
 | Naming the machine behind a regular cadence | A cadence proves a timer, not *which* timer. Confirm it by switching the candidate off and watching the rhythm stop — a fridge compressor cycles every 20–40 min and mimics almost anything. |
-| A near-zero duty cycle on a load somebody can hear running | A percentile-referenced detector reports "always on" as "never on". Rule out the ceiling before you report an absence — see Tooling. |
+| A near-zero duty cycle on a load somebody can hear running | A percentile-referenced detector reports "always on" as "never on". Re-run at a higher `--reference-percentile` before you report an absence — if the answer moves, the first one was past its ceiling. |
 
 ## Tooling
 
@@ -157,25 +159,146 @@ downstream of the sensor rather than proving nothing happened.
 and reports duty cycle per segment. Column names are arguments — it assumes nothing
 about your monitor's schema. Run with `--help`.
 
-`synth.py` alongside it: writes a record with a **known** duty cycle and run length,
-so you can calibrate `detect.py`'s thresholds against ground truth before pointing it
-at data whose answer you don't have. `./synth.py <drift_volts> <run_min> <period_min>
-out.csv` prints the truth it wrote.
+`synth.py` alongside it: writes a record whose duty cycle and run length you already
+know, so `detect.py` can be calibrated against ground truth before it is pointed at
+data whose answer nobody has. It prints the truth it wrote.
 
-**The duty cycle is a percentile estimate, and the run-length line printed under it is
-how you check it.** `runs()` marks a window as running when it sits `--depression` volts
-below the 75th percentile of a neighbourhood `--reference-window` wide either side.
-Measured against `synth.py` records with known ground truth, that returns the *exact*
-duty cycle over a wide band, and fails in three distinguishable ways outside it. All
-three are legible in the two lines the tool already prints.
+`calibrate.sh` runs the sweeps below and prints them as markdown. **Every duty-cycle
+figure in this section is its output.** Re-run it after any change to `detect.py` and
+paste the result back rather than editing a number by hand — a document describing a
+tool's failure boundaries has to be derived from the tool, or it ends up describing a
+tool that no longer exists.
 
-| Symptom | Cause | What to do |
+### Read the run-length line, not just the duty cycle
+
+`runs()` marks a window as running when it sits `--depression` volts below the 75th
+percentile of a neighbourhood `--reference-window` wide either side. That reference is
+only a *resting* voltage while resting windows outnumber running ones inside it, so the
+estimate has boundaries — and the run-length line printed underneath is what makes two
+of the three legible before you quote the number.
+
+**The figures below are from a noiseless, single-load fixture. They are the optimistic
+case.** Real minute means carry supply noise and overlapping loads, both of which push
+the reference down; treat the boundaries as the best the estimator will ever do, not as
+its typical behaviour.
+
+### 1. Duty above the reference percentile — the cliff, and only one lever moves it
+
+`calibrate.sh`, run length and drift held, period varied:
+
+| true duty | reported | run length (median / max) |
 |---|---|---|
-| `max` run length far above the known cycle — `median 4, max 117` | `--depression` is below the noise floor, so idle windows are swept into the runs. **Over**-reports: a true 16.1% read as 47.8% at `--depression 0.05`. | Raise `--depression` until `max` settles near the median. Above the noise floor the estimate barely moves — 0.2, 0.4 and 0.6 V all returned 16.1%. |
-| A run length well below the cycle you know the appliance has — `median 15` where the load runs 60 | A single run is long relative to `--reference-window`, so the reference sinks into the middle of it. **Under**-reports, mildly then sharply: at a true 50%, runs of 5 and 20 windows both read 50.0%, 30 reads 48.8%, 45 reads 46.0%, and 60 reads **22.9%**. Note the mild end shows *no* run-length tell — 45-window runs still report `median 45`. | Raise `--reference-window` past the longest run: at 60-window runs that recovers 22.9% → 47.4% at `60` and **50.0% at `90`**. Sweep it and stop when the answer stops moving. Because the mild end is invisible, widen it as a matter of course for any load that runs for tens of minutes. |
-| Duty implausibly low or **0.0%**, few or no runs, on a load someone can hear running | True duty is above ~70%, so the 75th percentile sits *inside* the runs at every scale. 70% reads 69.9% — but 72.5% reads 30%, 75% reads 3%, and **80% reads 0.0%**: a pump running four minutes in every five, reported as nothing. | **No setting fixes this.** Widening `--reference-window` to 120 or 300 still returns 0.0%; it is a hard ceiling of a 75th-percentile reference. Re-run over a shorter window where the load is not near-continuous, or measure with a clamp meter. |
+| 50.0% | 50.0% | 10 / 10 |
+| 60.0% | 60.0% | 12 / 12 |
+| 65.0% | 64.4% | 13 / 13 |
+| 70.0% | 68.3% | 14 / 14 |
+| 75.0% | **25.7%** | 5 / 15 |
+| 80.0% | **0.8%** | 6 / 6 |
+| 85.0% | **0.0%** | — / — |
+| 90.0% | **0.0%** | — / — |
 
-The first two are recoverable and the third is not, which is the one worth carrying:
-**this detector cannot tell "no load" from "load almost always on".** A duty cycle near
-zero on a complaint that began with someone hearing a pump run is that case until proven
-otherwise.
+Past ~70% the 75th percentile is *inside* the runs and the estimate collapses downward.
+**The ceiling is the percentile — literally.** `--reference-percentile` moves it:
+
+| true duty | `0.75` (default) | `0.90` | `0.95` |
+|---|---|---|---|
+| 20.0% | 20.0% | 20.0% | 20.0% |
+| 50.0% | 50.0% | 50.0% | 50.0% |
+| 70.0% | 68.3% | 70.0% | 70.0% |
+| 75.0% | 25.7% | 75.0% | 75.0% |
+| 80.0% | 0.8% | 80.0% | 80.0% |
+| 90.0% | 0.0% | 12.8% | 90.0% |
+| 95.0% | 0.0% | 0.0% | 4.0% |
+
+Each column is exact right up to a true duty of about its own percentile, then falls off
+the same cliff. So the knob exists — but you cannot set it correctly in advance, because
+setting it requires the answer you are trying to measure.
+
+**Use the disagreement instead.** Run it twice, at `0.75` and `0.90`. At a true 50% both
+return 50.0%; at a true 80% they return 0.8% and 80.0%. **A duty cycle that moves when
+you raise the percentile was below its ceiling at the lower setting** — that is the
+warning the single-run output cannot give you, and it costs one extra invocation.
+
+Do not simply default to `0.95` and forget it. This fixture is noiseless, so it prices
+the benefit and not the cost: on a real record a high quantile sits up in the noise band
+rather than on the resting voltage, inflating every window's depression. Raise it
+deliberately, for a load you have reason to think is near-continuous, and sanity-check
+the result against the run-length line.
+
+Widening `--reference-window` is *not* the lever here, and reaching for it makes things
+worse rather than merely not-better. Same 80%-duty fixture, drift varied:
+
+| drift amplitude | `--reference-window 30` | `120` | `300` |
+|---|---|---|---|
+| 0.0 V | 0.0% | 0.0% | 0.0% |
+| 0.2 V | 0.0% | 0.0% | 28.2% |
+| 0.4 V | 0.0% | 41.4% | 44.9% |
+| 0.6 V | 0.0% | **52.8%** | **53.5%** |
+
+With no baseline wander a wide window keeps returning an obvious `0.0%`. With realistic
+wander it returns **53% on a true 80% load**, stable across window widths — so a sweep
+that settles reads exactly like a converged answer. **A `--reference-window` sweep that
+stops moving is not evidence you have escaped the ceiling.** Only the percentile
+disagreement above is.
+
+**The thing to carry: at the default settings this detector cannot tell "no load" from
+"load almost always on".** A duty cycle that comes back near zero — or merely lower than
+expected — on a complaint that began with somebody hearing a pump run is this case until
+a second percentile, a shorter window, or a clamp meter says otherwise.
+
+### 2. Runs long relative to `--reference-window` — recoverable, but silent at the mild end
+
+Duty held at 50%, run length varied against the default `--reference-window 30`:
+
+| runs of | reported (true 50%) | run length (median / max) |
+|---|---|---|
+| 5 windows | 50.0% | 5 / 5 |
+| 10 windows | 50.0% | 10 / 10 |
+| 20 windows | 50.0% | 20 / 20 |
+| 30 windows | 48.8% | 30 / 30 |
+| 45 windows | 46.0% | 45 / 45 |
+| 60 windows | **22.9%** | **15** / 15 |
+
+Note where the tell appears and where it does not. At 30 and 45 windows the duty cycle
+is already drifting down while the run length reads *correctly* — no symptom at all. It
+only announces itself at 60, by reporting a median of 15 against a load that runs 60.
+
+`--reference-window` fixes this limb, but it is not monotone — do not just make it huge:
+
+| `--reference-window` | true 50%, runs of 60 | true 80%, runs of 8 |
+|---|---|---|
+| 30 | 22.9% | 0.0% |
+| 60 | 50.0% | 33.3% |
+| 90 | 50.0% | 48.2% |
+| 120 | 50.0% | 52.8% |
+| 300 | **66.5%** | 53.5% |
+
+Aim for roughly 1.5× the longest run you expect. Below that it under-reports; far above
+it, the reference starts tracking the drift instead of the supply and it over-reports.
+Because the mild end has no symptom, **set this deliberately for any load that runs for
+tens of minutes** rather than waiting for the run-length line to complain.
+
+### 3. `--depression` below the drift gradient — over-reports, and does say so
+
+Same fixture (true 16.1%) at every threshold:
+
+| `--depression` | reported | run length (median / max) |
+|---|---|---|
+| 0.05 V | **47.8%** | 4 / **117** |
+| 0.10 V | 16.9% | 4 / 6 |
+| 0.20 V | 16.1% | 4 / 4 |
+| 0.40 V | 16.1% | 4 / 4 |
+| 0.60 V | 16.1% | 4 / 4 |
+
+This is the one failure the run-length line catches unambiguously: a `max` of 117 against
+a load that runs 4 windows. The threshold has to clear the baseline wander across
+±`--reference-window`, or the falling limb of the drift is itself counted as load. Above
+that it barely matters — 0.2, 0.4 and 0.6 V all return the exact answer. **Raise
+`--depression` until `max` settles near the median**, then stop.
+
+### What `synth.py` does not calibrate
+
+Only the duty-cycle path. Its motor starts are a fixed 1.60 V sag against a fixed 0.10 V
+lift, so every start scores a `sag/lift` of 16 and `--sag` / `--ratio` pass at any setting
+a reader would try. The 6–16 separation the Asymmetry section is about has to be
+established against a real load on the real outlet; there is no substitute here.

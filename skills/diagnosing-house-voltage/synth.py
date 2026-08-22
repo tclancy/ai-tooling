@@ -33,14 +33,19 @@ JITTER = 0.10  # intra-window spread when nothing is starting
 
 
 def rows(n, drift, run_len, period, start):
-    """One row per minute. A window is 'running' for the first run_len of each period."""
+    """One row per minute. A window is 'running' for the first run_len of each period.
+
+    Yields (running, row) so the caller counts the answer key off what was actually
+    written. A calibration fixture whose printed truth is recomputed from the same
+    expression twice can drift from its own data; this one cannot.
+    """
     for i in range(n):
         running = (i % period) < run_len
         starting = (i % period) == 0
         # Slow sinusoidal wander over the whole record -- the diurnal drift a
         # fixed baseline would misread as load.
         mean = BASE_VOLTS + drift * math.sin(2 * math.pi * i / n) - (RUNNING_SAG if running else 0.0)
-        yield {
+        yield running, {
             "observed_at": (start + dt.timedelta(minutes=i)).isoformat(),
             "volts_mean": f"{mean:.3f}",
             "volts_min": f"{mean - (INRUSH_SAG if starting else JITTER):.3f}",
@@ -54,7 +59,9 @@ def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("drift", type=float, help="volts of slow baseline wander over the record")
+    p.add_argument("drift", type=float,
+                   help="amplitude in volts of the slow baseline wander -- one full sine"
+                        " cycle across the whole record, so peak-to-peak is twice this")
     p.add_argument("run_len", type=int, help="windows the load runs for")
     p.add_argument("period", type=int, help="windows between the start of one run and the next")
     p.add_argument("csv", help="output path")
@@ -63,18 +70,25 @@ def main():
 
     if args.run_len > args.period:
         p.error("run_len cannot exceed period -- the load would never stop")
+    if args.run_len < 0:
+        p.error("run_len cannot be negative")
+    if args.period < 1:
+        p.error("period must be at least 1 window")
+    if args.windows < 1:
+        p.error("--windows must be at least 1")
 
     start = dt.datetime(2026, 8, 19, 6, 0, tzinfo=dt.UTC)
     out = list(rows(args.windows, args.drift, args.run_len, args.period, start))
     with open(args.csv, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(out[0]))
+        w = csv.DictWriter(f, fieldnames=list(out[0][1]))
         w.writeheader()
-        w.writerows(out)
+        w.writerows(row for _, row in out)
 
-    busy = sum((i % args.period) < args.run_len for i in range(args.windows))
+    busy = sum(running for running, _ in out)
     print(
-        f"GROUND TRUTH: {100 * busy / args.windows:.1f}% duty, "
-        f"runs of {args.run_len} windows every {args.period}"
+        f"GROUND TRUTH: {100 * busy / len(out):.1f}% duty, "
+        f"runs of {args.run_len} windows every {args.period}, "
+        f"{args.drift} V drift amplitude, {len(out)} windows"
     )
 
 
