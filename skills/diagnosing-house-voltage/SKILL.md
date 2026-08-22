@@ -92,19 +92,35 @@ Voltage records feel disconnected from money. They are not:
 average_watts ≈ duty_cycle × running_watts
 ```
 
-A ~90 W phantom against a ~900 W pump is ~10% duty. That converts a utility-bill
+A ~250 W phantom against a ~900 W pump is ~28% duty. That converts a utility-bill
 complaint into something a voltage log can confirm or refute in an evening — and it
 is often the only number anyone will act on.
 
-**Detect runs by shape, not by depression against a percentile.** A rolling percentile
-of the surrounding hour will count slow baseline wander as load, and overnight baselines
-wander by several tenths of a volt. Require a *step* — down by a threshold, held, then
-recovering — and check the run lengths it reports: a well pump refills a tank in about
-four minutes, so a detector claiming twenty-minute runs is describing itself.
+**Quote a duty cycle with the window it came from, or it means nothing.** The same
+pump over one 30-hour record read 46% with the house awake, 20% after midnight, and
+10.6% between 03:00 and 06:00. Only the whole-stint 28.7% is comparable to a monthly
+bill; the overnight figure is three times under it and would have refuted a load that
+was really there. Pick the window that matches what you are comparing against.
 
-**A duty cycle rarely accounts for the whole bill.** The appliance causing the pump to
-run usually draws its own power too. Expect the pump to be part of the excess, and say
-so, rather than quoting a match.
+**The gradient is itself a diagnostic.** A pure leak runs at a constant rate, so it
+reads flat across those windows. A duty cycle that tracks household activity is
+serving something, not escaping from something — that is a load, and it has an owner.
+
+**Depression against a rolling percentile is a sound way to find runs, but the
+reference has a neighbourhood — and when the load dominates that neighbourhood the
+estimate fails toward zero, silently.** A high percentile of the surrounding hour is
+only a *resting* voltage while resting windows outnumber running ones inside it. So
+**a low duty cycle is evidence of a small load only once you have ruled out a
+near-continuous one.** Calibrate against a record whose answer you already know before
+quoting a number; the Tooling section has the measured failure boundaries and a
+generator for making such records.
+
+**A match against the bill is a real result — state its uncertainty rather than
+discounting it.** Duty-cycle-times-nameplate and a utility bill share no assumptions,
+so agreement between them is the most load-bearing thing a voltage log can produce.
+It carries error bars on both sides: pump size is usually a guess, and the appliance
+that keeps the pump running draws its own power too. Give the range (a 230–277 W bill
+figure against a 258 W derived one is a match) instead of a single number.
 
 ## Isolate physically; halve the search space
 
@@ -133,9 +149,33 @@ downstream of the sensor rather than proving nothing happened.
 | Publishing a verdict from a window that just ended | Wait for the recovery. A restart can arrive minutes after you have declared everything healthy. |
 | A derived number that matches what you expected | Agreement with a prior estimate is a reason to re-check the derivation, not to stop. Two wrong things can agree. |
 | Naming the machine behind a regular cadence | A cadence proves a timer, not *which* timer. Confirm it by switching the candidate off and watching the rhythm stop — a fridge compressor cycles every 20–40 min and mimics almost anything. |
+| A near-zero duty cycle on a load somebody can hear running | A percentile-referenced detector reports "always on" as "never on". Rule out the ceiling before you report an absence — see Tooling. |
 
 ## Tooling
 
 `detect.py` in this directory: segments a CSV on latch resets, flags motor starts,
 and reports duty cycle per segment. Column names are arguments — it assumes nothing
 about your monitor's schema. Run with `--help`.
+
+`synth.py` alongside it: writes a record with a **known** duty cycle and run length,
+so you can calibrate `detect.py`'s thresholds against ground truth before pointing it
+at data whose answer you don't have. `./synth.py <drift_volts> <run_min> <period_min>
+out.csv` prints the truth it wrote.
+
+**The duty cycle is a percentile estimate, and the run-length line printed under it is
+how you check it.** `runs()` marks a window as running when it sits `--depression` volts
+below the 75th percentile of a neighbourhood `--reference-window` wide either side.
+Measured against `synth.py` records with known ground truth, that returns the *exact*
+duty cycle over a wide band, and fails in three distinguishable ways outside it. All
+three are legible in the two lines the tool already prints.
+
+| Symptom | Cause | What to do |
+|---|---|---|
+| `max` run length far above the known cycle — `median 4, max 117` | `--depression` is below the noise floor, so idle windows are swept into the runs. **Over**-reports: a true 16.1% read as 47.8% at `--depression 0.05`. | Raise `--depression` until `max` settles near the median. Above the noise floor the estimate barely moves — 0.2, 0.4 and 0.6 V all returned 16.1%. |
+| `median` run length near half the known cycle — `median 15` where the load runs 30, `median 15, max 30` where it runs 45 | A single run is long relative to `--reference-window`, so the reference sinks into the middle of it. **Under**-reports: a true 50% read 48.8% at 30-window runs, 46.0% at 45, and **22.9%** at 60. | Raise `--reference-window` past the longest run. At 60-window runs that recovers 22.9% → 47.4% at `60` and **50.0% at `90`**. Sweep it; the answer stops moving once the window is wide enough. |
+| Duty implausibly low or **0.0%**, few or no runs, on a load someone can hear running | True duty is above ~70%, so the 75th percentile sits *inside* the runs at every scale. 70% reads 69.9% — but 72.5% reads 30%, 75% reads 3%, and **80% reads 0.0%**: a pump running four minutes in every five, reported as nothing. | **No setting fixes this.** Widening `--reference-window` to 120 or 300 still returns 0.0%; it is a hard ceiling of a 75th-percentile reference. Re-run over a shorter window where the load is not near-continuous, or measure with a clamp meter. |
+
+The first two are recoverable and the third is not, which is the one worth carrying:
+**this detector cannot tell "no load" from "load almost always on".** A duty cycle near
+zero on a complaint that began with someone hearing a pump run is that case until proven
+otherwise.
