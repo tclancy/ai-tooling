@@ -92,9 +92,19 @@ Voltage records feel disconnected from money. They are not:
 average_watts ≈ duty_cycle × running_watts
 ```
 
-A ~250 W phantom against a ~900 W pump is ~28% duty. That converts a utility-bill
+A ~90 W phantom against a ~900 W pump is ~10% duty. That converts a utility-bill
 complaint into something a voltage log can confirm or refute in an evening — and it
 is often the only number anyone will act on.
+
+**Detect runs by shape, not by depression against a percentile.** A rolling percentile
+of the surrounding hour will count slow baseline wander as load, and overnight baselines
+wander by several tenths of a volt. Require a *step* — down by a threshold, held, then
+recovering — and check the run lengths it reports: a well pump refills a tank in about
+four minutes, so a detector claiming twenty-minute runs is describing itself.
+
+**A duty cycle rarely accounts for the whole bill.** The appliance causing the pump to
+run usually draws its own power too. Expect the pump to be part of the excess, and say
+so, rather than quoting a match.
 
 ## Isolate physically; halve the search space
 
@@ -121,6 +131,8 @@ downstream of the sensor rather than proving nothing happened.
 | Bucketing days in UTC for a house | Local midnight is what a household experiences; UTC days start mid-evening and file evening events under tomorrow. |
 | Calling a component faulty because it failed twice | Contacts pit from *operations × arc energy*. Two failures usually means something upstream is cycling it, not that the part is bad. |
 | Publishing a verdict from a window that just ended | Wait for the recovery. A restart can arrive minutes after you have declared everything healthy. |
+| A derived number that matches what you expected | Agreement with a prior estimate is a reason to re-check the derivation, not to stop. Two wrong things can agree. |
+| Naming the machine behind a regular cadence | A cadence proves a timer, not *which* timer. Confirm it by switching the candidate off and watching the rhythm stop — a fridge compressor cycles every 20–40 min and mimics almost anything. |
 
 ## Tooling
 
