@@ -21,6 +21,7 @@ import argparse
 import csv
 import datetime as dt
 import statistics as st
+from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 
@@ -31,10 +32,16 @@ def load(path, args):
             row = {"t": dt.datetime.fromisoformat(raw[args.time_col])}
             if row["t"].tzinfo is None:
                 row["t"] = row["t"].replace(tzinfo=dt.UTC)
-            for key, col in (("mean", args.mean_col), ("min", args.min_col), ("max", args.max_col)):
+            for key, col in (
+                ("mean", args.mean_col),
+                ("min", args.min_col),
+                ("max", args.max_col),
+            ):
                 row[key] = float(raw[col]) if raw[col] not in ("", None) else None
             for key, col in (("hi", args.hi_col), ("lo", args.lo_col)):
-                row[key] = float(raw[col]) if col and raw.get(col) not in ("", None) else None
+                row[key] = (
+                    float(raw[col]) if col and raw.get(col) not in ("", None) else None
+                )
             if row["mean"] is not None:
                 rows.append(row)
     rows.sort(key=lambda r: r["t"])
@@ -60,7 +67,7 @@ def segments(rows):
     if not rows or rows[0]["hi"] is None:
         return [rows]
     out, cur = [], [rows[0]]
-    for prev, row in zip(rows, rows[1:]):
+    for prev, row in pairwise(rows):
         if row["hi"] < prev["hi"] - 0.05 or row["lo"] > prev["lo"] + 0.05:
             out.append(cur)
             cur = []
@@ -89,7 +96,9 @@ def runs(rows, threshold, half_width=30, percentile=0.75):
     plausible wrong answer instead of an obvious zero.
     """
     for i, row in enumerate(rows):
-        near = sorted(x["mean"] for x in rows[max(0, i - half_width) : i + half_width + 1])
+        near = sorted(
+            x["mean"] for x in rows[max(0, i - half_width) : i + half_width + 1]
+        )
         row["dep"] = near[int(percentile * len(near))] - row["mean"]
     out, cur = [], []
     for row in rows:
@@ -105,52 +114,88 @@ def runs(rows, threshold, half_width=30, percentile=0.75):
 
 def report(rows, args, tz):
     starts = [r for r in rows if r["motor"]]
-    gaps = [
-        (b["t"] - a["t"]).total_seconds() / 60 for a, b in zip(starts, starts[1:])
-    ]
-    active = runs(rows, args.depression, args.reference_window, args.reference_percentile)
+    gaps = [(b["t"] - a["t"]).total_seconds() / 60 for a, b in pairwise(starts)]
+    active = runs(
+        rows, args.depression, args.reference_window, args.reference_percentile
+    )
     busy = sum(len(c) for c in active)
 
-    print(f"    {len(rows)} windows, {rows[0]['t'].astimezone(tz):%Y-%m-%d %H:%M}"
-          f" -> {rows[-1]['t'].astimezone(tz):%H:%M}")
-    print(f"    mean {st.fmean(r['mean'] for r in rows):.2f} V"
-          f"  (sd {st.pstdev([r['mean'] for r in rows]):.3f})")
-    print(f"    motor starts: {len(starts)}"
-          + (f", median gap {st.median(gaps):.0f} min" if gaps else ""))
+    print(
+        f"    {len(rows)} windows, {rows[0]['t'].astimezone(tz):%Y-%m-%d %H:%M}"
+        f" -> {rows[-1]['t'].astimezone(tz):%H:%M}"
+    )
+    print(
+        f"    mean {st.fmean(r['mean'] for r in rows):.2f} V"
+        f"  (sd {st.pstdev([r['mean'] for r in rows]):.3f})"
+    )
+    print(
+        f"    motor starts: {len(starts)}"
+        + (f", median gap {st.median(gaps):.0f} min" if gaps else "")
+    )
     if starts:
         s = sorted(r["sag"] for r in starts)
-        print(f"    start sag: median {st.median(s):.2f} V, range {min(s):.2f}-{max(s):.2f}")
+        print(
+            f"    start sag: median {st.median(s):.2f} V, range {min(s):.2f}-{max(s):.2f}"
+        )
         print("      NOTE: sag amplitude is specific to THIS outlet. Do not compare it")
         print("      across segments without re-validating against a known load.")
-    print(f"    duty cycle: {100 * busy / len(rows):.1f}%  ({busy} of {len(rows)} windows"
-          f" depressed >= {args.depression} V, in {len(active)} runs)")
+    print(
+        f"    duty cycle: {100 * busy / len(rows):.1f}%  ({busy} of {len(rows)} windows"
+        f" depressed >= {args.depression} V, in {len(active)} runs)"
+    )
     if active:
         lens = [len(c) for c in active]
         print(f"    run length: median {st.median(lens):.0f} windows, max {max(lens)}")
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("csv")
     p.add_argument("--time-col", default="observed_at")
     p.add_argument("--mean-col", default="volts_mean")
     p.add_argument("--min-col", default="volts_min")
     p.add_argument("--max-col", default="volts_max")
-    p.add_argument("--hi-col", default="volts_hi_max", help="latched running max; '' to disable")
-    p.add_argument("--lo-col", default="volts_lo_min", help="latched running min; '' to disable")
-    p.add_argument("--tz", default="UTC", help="timezone for display, e.g. America/New_York")
-    p.add_argument("--sag", type=float, default=0.4, help="volts; minimum sag for a motor start")
-    p.add_argument("--ratio", type=float, default=2.0, help="sag must exceed this multiple of lift")
-    p.add_argument("--depression", type=float, default=0.20,
-                   help="volts below local reference to count a window as 'load running'")
-    p.add_argument("--reference-window", type=int, default=30, metavar="WINDOWS",
-                   help="half-width of the neighbourhood the reference percentile is taken"
-                        " over (default 30, i.e. +/-30 min on minute rows). Wants ~1.5x the"
-                        " longest run you expect; below that, duty is under-reported")
-    p.add_argument("--reference-percentile", type=float, default=0.75, metavar="P",
-                   help="quantile of the neighbourhood used as the resting voltage"
-                        " (default 0.75). Raise it to measure a load whose duty cycle"
-                        " exceeds it; see SKILL.md for what that costs")
+    p.add_argument(
+        "--hi-col", default="volts_hi_max", help="latched running max; '' to disable"
+    )
+    p.add_argument(
+        "--lo-col", default="volts_lo_min", help="latched running min; '' to disable"
+    )
+    p.add_argument(
+        "--tz", default="UTC", help="timezone for display, e.g. America/New_York"
+    )
+    p.add_argument(
+        "--sag", type=float, default=0.4, help="volts; minimum sag for a motor start"
+    )
+    p.add_argument(
+        "--ratio", type=float, default=2.0, help="sag must exceed this multiple of lift"
+    )
+    p.add_argument(
+        "--depression",
+        type=float,
+        default=0.20,
+        help="volts below local reference to count a window as 'load running'",
+    )
+    p.add_argument(
+        "--reference-window",
+        type=int,
+        default=30,
+        metavar="WINDOWS",
+        help="half-width of the neighbourhood the reference percentile is taken"
+        " over (default 30, i.e. +/-30 min on minute rows). Wants ~1.5x the"
+        " longest run you expect; below that, duty is under-reported",
+    )
+    p.add_argument(
+        "--reference-percentile",
+        type=float,
+        default=0.75,
+        metavar="P",
+        help="quantile of the neighbourhood used as the resting voltage"
+        " (default 0.75). Raise it to measure a load whose duty cycle"
+        " exceeds it; see SKILL.md for what that costs",
+    )
     args = p.parse_args()
     if args.reference_window < 1:
         p.error("--reference-window must be at least 1 window")
@@ -158,8 +203,10 @@ def main():
     tz = ZoneInfo(args.tz)
     rows = load(args.csv, args)
     segs = segments(rows)
-    print(f"{len(rows)} windows in {len(segs)} segment(s)"
-          + (" -- split on sensor power-cycles" if len(segs) > 1 else ""))
+    print(
+        f"{len(rows)} windows in {len(segs)} segment(s)"
+        + (" -- split on sensor power-cycles" if len(segs) > 1 else "")
+    )
     if len(segs) > 1:
         print("Each segment is a DIFFERENT VANTAGE. Compare across them only via a")
         print("load you can repeat, never by absolute voltage or variance.\n")
