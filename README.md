@@ -67,9 +67,12 @@ exactly **one point** in the house:
 - **`skills/diagnosing-house-voltage/detect.py`** — segments a CSV on sensor
   power-cycles, flags motor starts from sag/lift asymmetry, and reports duty
   cycle per segment. Every column name is an argument, so it assumes nothing
-  about your monitor's schema. A self-contained
-  [PEP 723](https://peps.python.org/pep-0723/) script with no dependencies; run
-  it with `--help`.
+  about your monitor's schema; run it with `--help`. It and `synth.py` are both
+  self-contained [PEP 723](https://peps.python.org/pep-0723/) scripts importing
+  only the standard library, so `python3 detect.py --help` works as-is — while
+  the `uv run --script` shebang that makes `./detect.py` work wants
+  [`uv`](https://docs.astral.sh/uv/) on your `PATH` and fails with
+  `env: uv: No such file or directory` without it.
 - **`skills/diagnosing-house-voltage/synth.py`** — writes a record whose duty
   cycle and run length you already know, and prints that truth. Real data has no
   answer key, so this is how `detect.py` gets calibrated before it is pointed at
