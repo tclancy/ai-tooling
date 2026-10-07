@@ -18,6 +18,25 @@ fail() { echo "  FAIL: $*"; FAILED=1; }
 
 scenario() { echo "== $1"; }
 
+# Reachability control. Every numeric assertion below compares values scraped out
+# of detect.py/synth.py stdout with grep, and an empty capture makes two of them
+# pass for the wrong reason: `[ "" = "" ]` is true, and awk reads a bare "" as a
+# string so `"" < 10` is true as well. Both are exactly what a missing `uv`, a
+# changed output format, or a script that died before printing produces -- so the
+# scenarios that assert the behaviour would go green having measured nothing.
+# Assert the capture is a number BEFORE comparing it.
+assert_number() {
+  case "$2" in
+    '') fail "$1 captured nothing -- the scrape found no number, so the
+    comparison below would pass vacuously. Check that uv is on PATH and that
+    detect.py/synth.py still print the line this scrape greps for."; return 1 ;;
+  esac
+  case "$2" in
+    *[!0-9.]*|.|'') fail "$1 captured '$2', which is not a number"; return 1 ;;
+  esac
+  return 0
+}
+
 # --- synth.py's answer key agrees with detect.py on a fixture inside the good band
 scenario scenario_ground_truth_round_trips
 tmp="$(mktemp -d)"
@@ -25,7 +44,10 @@ truth=$(uv run --script "$SKILL_DIR/synth.py" 0.6 4 25 "$tmp/v.csv" --windows 72
         | grep -o '[0-9.]*% duty' | cut -d% -f1)
 got=$(uv run --script "$SKILL_DIR/detect.py" "$tmp/v.csv" --hi-col '' --lo-col '' \
       | grep -o 'duty cycle: [0-9.]*%' | grep -o '[0-9.]*')
-[ "$truth" = "$got" ] || fail "synth said ${truth}% duty, detect reported ${got}%"
+if assert_number "synth ground truth" "$truth" \
+   && assert_number "detect duty cycle" "$got"; then
+  [ "$truth" = "$got" ] || fail "synth said ${truth}% duty, detect reported ${got}%"
+fi
 rm -rf "$tmp"
 
 # --- the documented ceiling is real: past ~70% duty, detect.py collapses downward
@@ -36,9 +58,11 @@ got=$(uv run --script "$SKILL_DIR/detect.py" "$tmp/v.csv" --hi-col '' --lo-col '
       | grep -o 'duty cycle: [0-9.]*%' | grep -o '[0-9.]*')
 # True duty is 80%. If detect.py is ever fixed so this reports near 80, SKILL.md's
 # whole ceiling section is stale and must be rewritten -- so failing here is correct.
-awk -v g="$got" 'BEGIN { exit !(g < 10) }' \
-  || fail "80%-duty fixture reported ${got}% -- expected the documented collapse (<10%);
+if assert_number "detect duty cycle" "$got"; then
+  awk -v g="$got" 'BEGIN { exit !(g + 0 < 10) }' \
+    || fail "80%-duty fixture reported ${got}% -- expected the documented collapse (<10%);
     if detect.py was improved, regenerate SKILL.md's Tooling section from calibrate.sh"
+fi
 rm -rf "$tmp"
 
 # --- SKILL.md's numbers ARE calibrate.sh's output, not a transcription of it
