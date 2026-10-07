@@ -50,6 +50,47 @@ outlet, garage, doorbell) and replaying it from a microcontroller:
 The architectural through-line: the transmitter stays a dumb pulse pump, and
 every protocol, CLI, and web artifact is *derived* from one device profile.
 
+### diagnosing-house-voltage
+
+A method for answering a household electrical complaint — flickering lights, an
+unexplained bill, a breaker or pressure switch that keeps failing — from a
+plug-in monitor's time-series voltage record, given that such a record measures
+exactly **one point** in the house:
+
+- **`skills/diagnosing-house-voltage/SKILL.md`** — the reasoning that stops you
+  over-reading that one point: the inversion everybody gets backwards first (a
+  sag on *every* circuit is what one large load looks like, not a distributed
+  fault); segmenting on latched-extreme resets before comparing anything,
+  because a moved sensor invalidates every comparison across the move; and
+  `average_watts ≈ duty_cycle × running_watts`, the bridge from a voltage log to
+  a number someone will act on.
+- **`skills/diagnosing-house-voltage/detect.py`** — segments a CSV on sensor
+  power-cycles, flags motor starts from sag/lift asymmetry, and reports duty
+  cycle per segment. Every column name is an argument, so it assumes nothing
+  about your monitor's schema. A self-contained
+  [PEP 723](https://peps.python.org/pep-0723/) script with no dependencies; run
+  it with `--help`.
+- **`skills/diagnosing-house-voltage/synth.py`** — writes a record whose duty
+  cycle and run length you already know, and prints that truth. Real data has no
+  answer key, so this is how `detect.py` gets calibrated before it is pointed at
+  data whose answer nobody has.
+- **`skills/diagnosing-house-voltage/calibrate.sh`** — sweeps `synth.py`
+  fixtures through `detect.py` and prints the result as the markdown tables
+  SKILL.md's Tooling section carries.
+
+The through-line is derivation again, one level up from the tool. **Every
+duty-cycle figure in SKILL.md's Tooling section is `calibrate.sh` output,
+pasted**, and `tests/skills/run_sh_tests.sh` fails the build when `calibrate.sh`
+emits a row SKILL.md does not carry — so change `detect.py`, re-run
+`calibrate.sh`, paste the output back, and never hand-edit a figure there. The
+scope is exact: the prose around those tables is written rather than generated,
+and the duty-cycle figures *outside* Tooling are not `calibrate.sh`'s at all —
+four of them are cited to a private record SKILL.md says cannot be re-derived
+from this repo. It matters because those boundaries are the
+interesting content — Tooling is where the estimator's failure modes are
+measured, and they are bad enough to read before quoting a duty cycle to
+anyone. This document has drifted away from the tool before.
+
 ## Installing
 
 Clone the repo, then from its root:
