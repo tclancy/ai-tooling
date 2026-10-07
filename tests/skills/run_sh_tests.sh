@@ -59,15 +59,34 @@ got=$(uv run --script "$SKILL_DIR/detect.py" "$tmp/v.csv" --hi-col '' --lo-col '
 # True duty is 80%. If detect.py is ever fixed so this reports near 80, SKILL.md's
 # whole ceiling section is stale and must be rewritten -- so failing here is correct.
 if assert_number "detect duty cycle" "$got"; then
-  awk -v g="$got" 'BEGIN { exit !(g + 0 < 10) }' \
-    || fail "80%-duty fixture reported ${got}% -- expected the documented collapse (<10%);
-    if detect.py was improved, regenerate SKILL.md's Tooling section from calibrate.sh"
+  # Two-sided on purpose. An upper bound alone passes on 0.0%, which is what
+  # detect.py reports when it finds no depression at all -- a tool that detected
+  # nothing is not a tool exhibiting the documented collapse. Measured at this
+  # commit this fixture reports 0.8%, so the lower bound has real headroom.
+  awk -v g="$got" 'BEGIN { exit !(g + 0 > 0 && g + 0 < 10) }' \
+    || fail "80%-duty fixture reported ${got}% -- expected the documented collapse
+    (above 0%, below 10%). A reported 0% means detect.py found nothing rather
+    than collapsing; if detect.py was improved, regenerate SKILL.md's Tooling
+    section from calibrate.sh"
 fi
 rm -rf "$tmp"
 
 # --- SKILL.md's numbers ARE calibrate.sh's output, not a transcription of it
 scenario scenario_skill_md_matches_calibrate
-generated="$(bash "$SKILL_DIR/calibrate.sh")" || fail "calibrate.sh exited non-zero"
+# /bin/bash, not `bash`: calibrate.sh generates the figures SKILL.md quotes, and
+# a Homebrew bash earlier on PATH would generate them under a shell no user runs.
+generated="$(/bin/bash "$SKILL_DIR/calibrate.sh")" || fail "calibrate.sh exited non-zero"
+
+# Reachability control. The comparison below is a loop over calibrate.sh's table
+# rows, and a loop over nothing passes: with no rows, FAILED is never set and
+# this scenario -- the load-bearing one -- reports ALL PASS having compared
+# nothing. A non-zero exit is NOT enough to catch that, because every figure
+# reaches `generated` through a command substitution whose failure does not
+# propagate. Assert the count before trusting the comparison.
+rows="$(grep -cE '^\| ' <<<"$generated")"
+[ "$rows" -ge 20 ] || fail "calibrate.sh emitted $rows markdown table rows; it
+    emits well over 20. Nothing was compared, so this scenario would otherwise
+    pass having measured nothing."
 # SKILL.md bolds figures for emphasis; that is the only edit allowed on a pasted row.
 documented="$(grep -E '^\| ' "$SKILL_DIR/SKILL.md" | sed 's/\*\*//g')"
 while IFS= read -r row; do

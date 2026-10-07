@@ -49,3 +49,17 @@ if ! grep -qxF "$PASS_LINE" <<< "$out"; then
   die "$SUITE exited 0 but never printed '$PASS_LINE'.
     That is a suite that stopped early, not a suite that passed."
 fi
+
+# Reachability control: the pass line proves the suite finished, not that it
+# tested anything. tests/installer/lib.sh prints `RESULT: ALL PASS` off a
+# failure counter that nothing incremented, so a suite whose scenario list went
+# missing -- `run_scenarios` with no arguments -- reports ALL PASS and exits 0.
+# Both suites announce each scenario as `== <name>`, so the count is derivable
+# here without either suite having to cooperate.
+scenarios="$(grep -c '^== ' <<< "$out")"
+if [ "$scenarios" -lt 1 ]; then
+  die "$SUITE printed '$PASS_LINE' but announced 0 scenarios.
+    A suite that ran nothing has not passed. If a scenario list was refactored
+    away, that is the bug; if the '== <name>' announcement changed, fix this
+    check to match."
+fi
