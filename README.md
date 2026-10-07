@@ -100,3 +100,62 @@ other's installs.
 Adding a harness later is one line in `harnesses.tsv`; adding new content
 is zero lines — the installer globs `skills/`, `agents/`, and `commands/`
 at runtime.
+
+## Developing
+
+### Quality gates
+
+```bash
+pip install pre-commit    # or: brew install pre-commit
+pre-commit install        # once per clone
+```
+
+After that every commit runs the gates below. To run them against the whole
+tree without committing: `pre-commit run --all-files`.
+
+| Gate | Covers | Notes |
+|---|---|---|
+| `trailing-whitespace`, `end-of-file-fixer`, `mixed-line-ending` | everything | `.gitattributes` declares `eol=lf`; that governs what git *stores*, and these hooks are what keep a CRLF pair out of a file nobody re-checks-out. |
+| `check-yaml`, `check-merge-conflict` | `.yml`, all | |
+| `check-executables-have-shebangs`, `check-shebang-scripts-are-executable` | `.sh` | The installer copies file modes into `~/.agents/`, so a skill script that ships non-executable is broken for every user. |
+| `shellcheck` | `install.sh`, `calibrate.sh`, `tests/**/*.sh` | Run with `-x` so `. lib.sh` is followed. Two findings in `install.sh` are suppressed inline, each with the reason. |
+| `ruff-check`, `ruff-format` | `skills/**/*.py` | Default rule set, unconfigured — matching every other repo in this fleet. |
+| `installer-tests` | 14 scenarios | Via `tests/run-suite.sh`. |
+| `skills-tests` | `detect.py` calibration, SKILL.md figure drift | Via `tests/run-suite.sh`. |
+
+The two suites together take about 10 seconds, which is why they run at commit
+time rather than on push.
+
+**`tests/run-suite.sh` is the single entry point for both suites, and CI calls
+it too**, so a local commit and a CI run exercise one code path. It exists
+because a gate's pass signal must not be silence: it fails when the suite file
+is missing, when the interpreter is missing, and — the case that matters — when
+a suite exits 0 without printing `RESULT: ALL PASS`. It tests for that exact
+allowed string rather than grepping for a known failure, because the two suites
+spell their failures differently (`RESULT: FAIL` vs `RESULT: FAILURES`) and a
+gate watching for one would pass every time the other failed.
+
+### One gate you cannot run locally
+
+`powershell-lint` (PSScriptAnalyzer over `install.ps1` and
+`tests/installer/run_ps1_tests.ps1`) is **CI-only**. The target is Windows
+PowerShell 5.1, which has no macOS or Linux equivalent, so there is nothing a
+pre-commit hook on this machine could honestly run. If you change a `.ps1`
+file, expect CI to be the first thing that reads it.
+
+### Decisions worth knowing
+
+- **No `[tool.ruff]` / `ruff.toml`.** The two scripts in
+  `skills/diagnosing-house-voltage/` pass ruff's default rule set clean, and no
+  other repo in this fleet configures ruff. Widening the selection is a
+  separate change with its own diff — it would add 20 `E501`s, all of them
+  inside argparse help strings.
+- **No `pyproject.toml`.** This is not a Python package. Both scripts are
+  self-contained [PEP 723](https://peps.python.org/pep-0723/) scripts
+  (`dependencies = []`), run via `uv run --script`, and adding a project
+  manifest would imply a package that does not exist.
+- **No Dependabot config.** Deliberate, and the one item from the usual
+  project-setup checklist that was left out: the only ecosystem here is
+  `github-actions`, and the fleet currently carries a backlog of Dependabot
+  PRs that cannot clear review. Adding another producer makes a known problem
+  worse. Revisit when that backlog has a resolution.
