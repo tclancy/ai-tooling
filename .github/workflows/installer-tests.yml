@@ -6,6 +6,22 @@ on:
   workflow_dispatch:   # lets maintainers re-run CI manually
 
 jobs:
+  # Everything .pre-commit-config.yaml gates, run the same way a commit runs it,
+  # so a contributor who skipped `pre-commit install` still gets the verdict.
+  # The two local test hooks are SKIPped here and run as their own jobs below --
+  # the jobs give a per-platform matrix that one ubuntu lint job cannot.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: installer-tests,skills-tests
+
   bash:
     strategy:
       matrix:
@@ -13,8 +29,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # /bin/bash on the macOS runner is 3.2 — the compatibility target.
-      - run: /bin/bash tests/installer/run_sh_tests.sh
+      # Via the same wrapper pre-commit uses, so CI and a local commit exercise
+      # one code path. The wrapper invokes the suite with /bin/bash explicitly:
+      # that is 3.2 on the macOS runner, which is the compatibility target.
+      - run: tests/run-suite.sh tests/installer/run_sh_tests.sh
 
   skills:
     runs-on: ubuntu-latest
@@ -23,7 +41,7 @@ jobs:
       # SHA-pinned to the same v9.0.0 the rest of the fleet uses (awairelement ci.yml).
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       # Asserts SKILL.md's ~40 quoted figures are still calibrate.sh's output.
-      - run: /bin/bash tests/skills/run_sh_tests.sh
+      - run: tests/run-suite.sh tests/skills/run_sh_tests.sh
 
   windows:
     runs-on: windows-latest
@@ -33,3 +51,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: .\tests\installer\run_ps1_tests.ps1
+
+  # PowerShell's linter has no macOS/Linux story that matches the 5.1 target, so
+  # unlike every other gate here this one cannot be run before pushing. It is a
+  # CI-only gate by necessity -- see README "Quality gates".
+  powershell-lint:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PSScriptAnalyzer
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+      - name: Analyze
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Recurse -Filter *.ps1 |
+                   Where-Object { $_.FullName -notmatch '\\\.git\\' }
+          if ($files.Count -eq 0) {
+            # A lint job that found nothing to lint is a lint job that passed for
+            # the wrong reason. This repo has .ps1 files; if the glob stops
+            # matching them, fail instead of reporting success.
+            Write-Error "no .ps1 files found -- the glob is broken, not the repo clean"
+          }
+          Write-Host "analyzing $($files.Count) file(s)"
+          $r = Invoke-ScriptAnalyzer -Path $files.FullName -Severity Error,Warning
+          if ($r) {
+            $r | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+            Write-Error "PSScriptAnalyzer reported $($r.Count) finding(s)"
+          }
+          Write-Host "PSScriptAnalyzer clean"
