@@ -27,7 +27,7 @@ EOF
 
 for arg in "$@"; do
   case "$arg" in
-    --link) MODE=link ;;
+    --link) MODE="link" ;;
     --uninstall) ACTION=uninstall ;;
     --dry-run) DRY=1 ;;
     --force) FORCE=1 ;;
@@ -53,6 +53,14 @@ fold() {
 }
 
 expand_tilde() {
+  # SC2088 fires on a quoted tilde because it cannot expand -- which is the
+  # point. These are case PATTERNS matching a literal "~" that arrived in the
+  # input (from harnesses.tsv); expanding here would defeat the function, whose
+  # whole job is to do that expansion against $HOME_DIR explicitly so the
+  # installer's scratch-HOME tests can redirect it. The directive has to sit in
+  # front of the whole `case` -- shellcheck rejects one on a single branch
+  # (SC1124).
+  # shellcheck disable=SC2088
   case "$1" in
     "~")    printf '%s\n' "$HOME_DIR" ;;
     "~/"*)  printf '%s\n' "$HOME_DIR/${1#\~/}" ;;
