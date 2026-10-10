@@ -1,0 +1,96 @@
+# Quality gates for ai-tooling (issue #2).
+#
+# Both `stages` keys below are spelled out on purpose. pre-commit's default
+# stage list is EVERY stage, and `pre-commit install` installs only the
+# pre-commit hook type -- so a hook that silently inherits those defaults is
+# either running where it was not meant to, or declared and never installed.
+# This repo gates everything at commit time, and says so twice rather than
+# relying on either default.
+default_stages: [pre-commit]
+default_install_hook_types: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      # NOTE for a future maintainer: do NOT add `fix-byte-order-marker` here.
+      # install.ps1 opens with a UTF-8 BOM on purpose -- Windows PowerShell 5.1
+      # reads a BOM-less file as Windows-1252 and mangles its em-dashes. The hook
+      # looks like an obvious hygiene win and would silently break the installer
+      # on the one platform it is written for.
+      #
+      # .gitattributes already declares `eol=lf` for .sh/.ps1/.md/.tsv. This is
+      # the hook that makes that declaration enforceable rather than advisory:
+      # .gitattributes normalises what git STORES, and says nothing about a CRLF
+      # pair a Windows editor leaves in a file that is never re-checked-out.
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # This repo's CI is five jobs across three runner OSes, and until now nothing
+  # checked it. actionlint parses the workflow, validates runner labels, action
+  # inputs and `${{ }}` expressions, and runs shellcheck over every `run:` block.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  # Shell is the primary language here (install.sh, calibrate.sh, both test
+  # runners, lib.sh). -x follows `. lib.sh` so the library's definitions are in
+  # scope; without it every helper reads as an unassigned variable.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [-x]
+
+  # Ruff defaults, deliberately unconfigured -- there is no [tool.ruff] block in
+  # any repo in this fleet, and the two PEP-723 scripts here pass the default
+  # rule set clean once ruff-format has run. Widening the selection is a
+  # separate decision with its own diff; measured at this commit it would add
+  # exactly 2 E501s, both in string literals ruff-format cannot split.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.4
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  # Tom's issue asked for "tests locally", so the suites run at commit time
+  # rather than pre-push: together they are ~10s, which is cheap enough to pay
+  # per commit and is the only way a gate catches a break before it is history.
+  #
+  # `language: script` with a wrapper, not an `entry:` one-liner. The wrapper
+  # exists to separate "ran and passed" from the ways this can be silently
+  # green -- a missing runner, a missing interpreter, a suite that printed no
+  # result line. See metaframework #458 for the gate that went green for months
+  # because silence was its pass signal.
+  - repo: local
+    hooks:
+      # No `files:` filter on either hook, on purpose. The first version of
+      # this config had one, and it left the gate blind on exactly its own
+      # source: staging tests/run-suite.sh -- the wrapper whose whole job is to
+      # not be silently green -- ran neither suite, and staging
+      # tests/skills/run_sh_tests.sh ran neither either. A filter has to track
+      # the suites' whole dependency graph to stay correct, and it silently
+      # under-runs the moment it falls behind. At ~10s for both, always running
+      # them is cheaper than maintaining that.
+      - id: installer-tests
+        name: Installer tests (14 scenarios, bash 3.2 compatible)
+        language: script
+        entry: tests/run-suite.sh
+        args: [tests/installer/run_sh_tests.sh]
+        pass_filenames: false
+        always_run: true
+
+      - id: skills-tests
+        name: Skill tests (detect.py calibration + SKILL.md figure drift)
+        language: script
+        entry: tests/run-suite.sh
+        args: [tests/skills/run_sh_tests.sh]
+        pass_filenames: false
+        always_run: true

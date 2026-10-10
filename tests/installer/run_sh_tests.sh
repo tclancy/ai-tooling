@@ -1,5 +1,6 @@
 #!/bin/bash
 set -eu
+# shellcheck source=tests/installer/lib.sh
 . "$(dirname "$0")/lib.sh"
 
 RECEIPT_REL=".agents/.ai-tooling-receipt"

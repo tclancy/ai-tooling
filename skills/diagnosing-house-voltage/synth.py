@@ -44,28 +44,42 @@ def rows(n, drift, run_len, period, start):
         starting = (i % period) == 0
         # Slow sinusoidal wander over the whole record -- the diurnal drift a
         # fixed baseline would misread as load.
-        mean = BASE_VOLTS + drift * math.sin(2 * math.pi * i / n) - (RUNNING_SAG if running else 0.0)
-        yield running, {
-            "observed_at": (start + dt.timedelta(minutes=i)).isoformat(),
-            "volts_mean": f"{mean:.3f}",
-            "volts_min": f"{mean - (INRUSH_SAG if starting else JITTER):.3f}",
-            "volts_max": f"{mean + JITTER:.3f}",
-            "volts_hi_max": "121.000",
-            "volts_lo_min": "111.000",
-        }
+        mean = (
+            BASE_VOLTS
+            + drift * math.sin(2 * math.pi * i / n)
+            - (RUNNING_SAG if running else 0.0)
+        )
+        yield (
+            running,
+            {
+                "observed_at": (start + dt.timedelta(minutes=i)).isoformat(),
+                "volts_mean": f"{mean:.3f}",
+                "volts_min": f"{mean - (INRUSH_SAG if starting else JITTER):.3f}",
+                "volts_max": f"{mean + JITTER:.3f}",
+                "volts_hi_max": "121.000",
+                "volts_lo_min": "111.000",
+            },
+        )
 
 
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("drift", type=float,
-                   help="amplitude in volts of the slow baseline wander -- one full sine"
-                        " cycle across the whole record, so peak-to-peak is twice this")
+    p.add_argument(
+        "drift",
+        type=float,
+        help="amplitude in volts of the slow baseline wander -- one full sine"
+        " cycle across the whole record, so peak-to-peak is twice this",
+    )
     p.add_argument("run_len", type=int, help="windows the load runs for")
-    p.add_argument("period", type=int, help="windows between the start of one run and the next")
+    p.add_argument(
+        "period", type=int, help="windows between the start of one run and the next"
+    )
     p.add_argument("csv", help="output path")
-    p.add_argument("--windows", type=int, default=720, help="rows to write (default 720)")
+    p.add_argument(
+        "--windows", type=int, default=720, help="rows to write (default 720)"
+    )
     args = p.parse_args()
 
     if args.run_len > args.period:

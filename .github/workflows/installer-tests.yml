@@ -5,7 +5,29 @@ on:
   pull_request:
   workflow_dispatch:   # lets maintainers re-run CI manually
 
+# Public repo pulling third-party actions: nothing here needs to write, so the
+# token should not be able to. Declared at the top level so a job added later
+# inherits it rather than silently getting the default write scope.
+permissions:
+  contents: read
+
 jobs:
+  # Everything .pre-commit-config.yaml gates, run the same way a commit runs it,
+  # so a contributor who skipped `pre-commit install` still gets the verdict.
+  # The two local test hooks are SKIPped here and run as their own jobs below --
+  # the jobs give a per-platform matrix that one ubuntu lint job cannot.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: installer-tests,skills-tests
+
   bash:
     strategy:
       matrix:
@@ -13,8 +35,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # /bin/bash on the macOS runner is 3.2 — the compatibility target.
-      - run: /bin/bash tests/installer/run_sh_tests.sh
+      # Via the same wrapper pre-commit uses, so CI and a local commit exercise
+      # one code path. The wrapper invokes the suite with /bin/bash explicitly:
+      # that is 3.2 on the macOS runner, which is the compatibility target.
+      - run: tests/run-suite.sh tests/installer/run_sh_tests.sh
 
   skills:
     runs-on: ubuntu-latest
@@ -23,7 +47,7 @@ jobs:
       # SHA-pinned to the same v9.0.0 the rest of the fleet uses (awairelement ci.yml).
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       # Asserts SKILL.md's ~40 quoted figures are still calibrate.sh's output.
-      - run: /bin/bash tests/skills/run_sh_tests.sh
+      - run: tests/run-suite.sh tests/skills/run_sh_tests.sh
 
   windows:
     runs-on: windows-latest
@@ -33,3 +57,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: .\tests\installer\run_ps1_tests.ps1
+
+  # PowerShell's linter has no macOS/Linux story that matches the 5.1 target, so
+  # unlike every other gate here this one cannot be run before pushing. It is a
+  # CI-only gate by necessity -- see README "Quality gates".
+  powershell-lint:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PSScriptAnalyzer
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          # Pinned, like every other tool version in this file. Unpinned, a
+          # module release turns main red overnight with no commit to blame.
+          Install-Module -Name PSScriptAnalyzer -RequiredVersion '1.25.0' `
+            -Force -Scope CurrentUser
+      - name: Analyze
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Recurse -Filter *.ps1
+          if ($files.Count -eq 0) {
+            # A lint job that found nothing to lint is a lint job that passed for
+            # the wrong reason. This repo has .ps1 files; if the glob stops
+            # matching them, fail instead of reporting success.
+            Write-Error "no .ps1 files found -- the glob is broken, not the repo clean"
+          }
+          Write-Host "analyzing $($files.Count) file(s)"
+          # -Severity Error only, deliberately. Both .ps1 files predate any
+          # linter and use script-internal helper names that PSScriptAnalyzer
+          # rates Warning: ~30 PSUseApprovedVerbs (Do-Install, Fail-Hard,
+          # Is-Ours, the Scenario-* set) plus PSUseSingularNouns on Get-Rows /
+          # Get-Units / Get-Planned. These are private functions in a standalone
+          # script, not a published module, so the convention buys little and
+          # renaming 48 functions is its own change. Gating on Warning here
+          # would make main permanently red, which only teaches people to
+          # ignore CI. See README "One gate you cannot run locally".
+          #
+          # -Path takes a single string, so pipe rather than splatting an array:
+          # $files.FullName would be coerced to one space-joined path and fail.
+          $r = $files | ForEach-Object {
+            Invoke-ScriptAnalyzer -Path $_.FullName -Severity Error
+          }
+          if ($r) {
+            $r | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+            Write-Error "PSScriptAnalyzer reported $($r.Count) Error-severity finding(s)"
+          }
+          Write-Host "PSScriptAnalyzer clean (Error severity)"
